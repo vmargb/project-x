@@ -91,7 +91,7 @@ If FILE is specified, write to it instead."
       (insert ";;; -*- lisp-data -*-\n")
       (let ((print-level nil) (print-length nil))
         (pp project-x-window-alist (current-buffer))))
-    (message (format "Wrote project window state to %s" project-x-window-list-file))))
+    (message "Wrote project window state to %s" (or file project-x-window-list-file))))
 
 (defun project-x--window-state-read (&optional file)
   "Read project window states from `project-x-window-list-file'.
@@ -117,17 +117,12 @@ With optional prefix argument ARG, query for project."
     (unless project-x-window-alist (project-x--window-state-read))
     (let ((file-list))
       ;; Collect file-list of all the open project buffers
-      (dolist (buf
-               (funcall (if (fboundp 'project--buffers-list)
-                            #'project--buffers-list
-                          #'project-buffers)
-                        (project-current))
-               file-list)
+      (dolist (buf (project-buffers (project-current)) file-list)
         (if-let ((file-name (or (buffer-file-name buf)
                                 (with-current-buffer buf
                                   (and (derived-mode-p 'dired-mode)
                                        dired-directory)))))
-            (push file-name file-list)))
+            (push file-name file-list))) ; here
       (setf (alist-get dir project-x-window-alist nil nil 'equal)
             (list (cons 'files file-list)
                   (cons 'windows (window-state-get nil t)))))
@@ -198,18 +193,18 @@ contains) a special file as a project."
         (define-key project-prefix-map (kbd "j") 'project-x-window-state-load)
         (if (listp project-switch-commands)
             (add-to-list 'project-switch-commands
-                         '(?j "Restore windows" project-x-windows) t)
+                         '(project-x-windows "Restore windows" ?j) t)
           (message "`project-switch-commands` is not a list, not adding 'restore windows' command"))
         (when project-x-save-interval
           (setq project-x-save-timer
                 (run-with-timer 0 (max project-x-save-interval 5)
                                 #'project-x-window-state-save))))
-    (remove-hook 'project-find-functions 'project-x-try-local 90)
+    (remove-hook 'project-find-functions 'project-x-try-local)
     (remove-hook 'kill-emacs-hook 'project-x--window-state-write)
     (define-key project-prefix-map (kbd "w") nil)
     (define-key project-prefix-map (kbd "j") nil)
     (when (listp project-switch-commands)
-      (delete '(?j "Restore windows" project-x-windows) project-switch-commands))
+      (delete '(project-x-windows "Restore windows" ?j) project-switch-commands))
     (when (timerp project-x-save-timer)
       (cancel-timer project-x-save-timer))))
 
