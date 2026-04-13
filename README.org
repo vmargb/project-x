@@ -49,7 +49,7 @@ OR, if you do not want to use the (opinionated) minor-mode =project-x-mode=,
     (add-hook 'project-find-functions 'project-x-try-local 90)
     (add-hook 'kill-emacs-hook 'project-x--window-state-write)
     (add-to-list 'project-switch-commands
-                 '(?j "Restore windows" project-x-windows) t)
+                 '(project-x-windows "Restore windows" ?j) t)
       :bind (("C-x p w" . project-x-window-state-save)
              ("C-x p j" . project-x-window-state-load)))
 #+end_src
@@ -65,7 +65,7 @@ OR, to automatically reload the windows when switching to a project,
     (add-hook 'kill-emacs-hook 'project-x--window-state-write)
     (setq project-switch-commands #'project-x-windows)
     :bind (("C-x p w" . project-x-window-state-save)
-	   ("C-x p j" . project-x-window-state-load))))
+	   ("C-x p j" . project-x-window-state-load)))
 #+end_src
 
 There are three customization options right now:
