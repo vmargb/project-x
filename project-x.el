@@ -173,6 +173,37 @@ DIR must include a .project file to be considered a project."
                    (locate-dominating-file dir project-x-local-identifier))))
       (cons 'local root)))
 
+(defun project-x--dynamic-switch-commands (orig-fun dir &rest args)
+  "Dynamically include 'Restore windows' to ARGS in ORIG-FUN if a saved state exists for DIR."
+  (unless project-x-window-alist (project-x--window-state-read)) ;; ensure latest state
+
+  (let* (;; normalize the path (resolves ~/ & enforces trailing slash)
+         (target-dir (file-name-as-directory (expand-file-name dir)))
+         ;; checks normalized strings against the alist keys
+         (has-session (catch 'found
+                        (dolist (state project-x-window-alist)
+                          (when (string= target-dir
+                                         (file-name-as-directory (expand-file-name (car state))))
+                            (throw 'found t)))))
+
+         (cmd-entry '(project-x-windows "Restore windows" ?j))
+
+         ;; dynamically bind the command list (only if it's a list)
+         (project-switch-commands
+          (if (listp project-switch-commands)
+              (if has-session
+                  ;; add it if it's missing (to avoid duplicates)
+                  (if (member cmd-entry project-switch-commands)
+                      project-switch-commands
+                    (append project-switch-commands (list cmd-entry)))
+                ;; else remove it if present
+                (seq-remove (lambda (cmd) (eq (car-safe cmd) 'project-x-windows))
+                            project-switch-commands))
+            ;; else if project-switch-commands is a symbol, leave it alone
+            project-switch-commands)))
+    ;; execute project switch with this temporary environment
+    (apply orig-fun dir args)))
+
 ;;;###autoload
 (define-minor-mode project-x-mode
   "Minor mode to enable extra convenience features for project.el.
@@ -184,27 +215,29 @@ contains) a special file as a project."
   :lighter ""
   :group 'project-x
   (if project-x-mode
-      ;;Turning the mode ON
+      ;; Turning the mode ON
       (progn
         (add-hook 'project-find-functions 'project-x-try-local 90)
         (add-hook 'kill-emacs-hook 'project-x--window-state-write)
         (project-x--window-state-read)
         (define-key project-prefix-map (kbd "w") 'project-x-window-state-save)
         (define-key project-prefix-map (kbd "j") 'project-x-window-state-load)
-        (if (listp project-switch-commands)
-            (add-to-list 'project-switch-commands
-                         '(project-x-windows "Restore windows" ?j) t)
-          (message "`project-switch-commands` is not a list, not adding 'restore windows' command"))
+        ;; dynamic menu advice for project.el
+        (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
+
         (when project-x-save-interval
           (setq project-x-save-timer
                 (run-with-timer 0 (max project-x-save-interval 5)
                                 #'project-x-window-state-save))))
+
+    ;; Turning the mode OFF
     (remove-hook 'project-find-functions 'project-x-try-local)
     (remove-hook 'kill-emacs-hook 'project-x--window-state-write)
     (define-key project-prefix-map (kbd "w") nil)
     (define-key project-prefix-map (kbd "j") nil)
-    (when (listp project-switch-commands)
-      (delete '(project-x-windows "Restore windows" ?j) project-switch-commands))
+    ;; remove dynamic menu advice
+    (advice-remove 'project-switch-project #'project-x--dynamic-switch-commands)
+
     (when (timerp project-x-save-timer)
       (cancel-timer project-x-save-timer))))
 
