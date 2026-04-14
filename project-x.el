@@ -122,10 +122,11 @@ With optional prefix argument ARG, query for project."
                                 (with-current-buffer buf
                                   (and (derived-mode-p 'dired-mode)
                                        dired-directory)))))
-            (push file-name file-list))) ; here
+            (push file-name file-list)))
       (setf (alist-get dir project-x-window-alist nil nil 'equal)
             (list (cons 'files file-list)
                   (cons 'windows (window-state-get nil t)))))
+    (project-x--window-state-write) ;; save to disk
     (message (format "Saved project state for %s" dir))))
 
 (defun project-x-window-state-load (dir)
