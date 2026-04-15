@@ -199,23 +199,28 @@ matching root as a `local' project."
 
 ;; More reliably add local projects + root markers to project list in one go
 (defun project-x-add-local-project (&optional dir)
-  "Create a project marker file in DIR and register it with `project.el'.
-Marker filename is derived from `project-x-local-identifier'."
+  "Ensure DIR is recognized as a project and register it with `project.el'.
+Creates a marker file from `project-x-local-identifier' if missing.
+If the marker already exists (e.g., after `project-forget-project'),
+simply re-register the project in memory."
   (interactive "DDirectory for project root: ")
   (let* ((dir (or dir default-directory))
          (dir (file-name-as-directory (expand-file-name dir)))
-         ;; extract the marker name, handling both string and list formats
+         ;; extract the marker name, handling both string and list format
          (marker-name (if (listp project-x-local-identifier)
                           (car project-x-local-identifier)
                         project-x-local-identifier))
          (marker-file (expand-file-name marker-name dir)))
-    (if (file-exists-p marker-file)
-        (message "Project marker '%s' already exists in %s" marker-name dir)
-      ;; else create the marker file and add it to project.el
+    ;; create marker only if it doesn't exist
+    (unless (file-exists-p marker-file)
       (with-temp-buffer (write-file marker-file))
-      (when-let ((project (project-current nil dir)))
-        (project-remember-project project))
-      (message "Added %s marker and registered project at %s" marker-name dir))))
+      (message "Created project marker '%s' in %s" marker-name dir))
+    ;; always attempt to register the project with project.el
+    (if-let ((project (project-current nil dir)))
+        (progn
+          (project-remember-project project)
+          (message "Registered project at %s" dir))
+      (message "Could not recognize %s as a project. Ensure project-x-mode is active." dir))))
 
 
 ;; Context-aware restore session advice to project.el
@@ -267,9 +272,8 @@ contains) a special file as a project."
         (add-hook 'project-find-functions 'project-x-try-local 90)
         (add-hook 'kill-emacs-hook 'project-x--window-state-write)
         (project-x--window-state-read)
-        (define-key project-prefix-map (kbd "w") 'project-x-window-state-save)
-        (define-key project-prefix-map (kbd "j") 'project-x-window-state-load)
-        ;; dynamic menu advice for project.el
+        (define-key project-prefix-map (kbd "w") #'project-x-window-state-save)
+        (define-key project-prefix-map (kbd "j") #'project-x-window-state-load)
         (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
 
         (when project-x-save-interval
@@ -278,8 +282,8 @@ contains) a special file as a project."
                                 #'project-x-window-state-save))))
 
     ;; Turning the mode OFF
-    (remove-hook 'project-find-functions 'project-x-try-local)
-    (remove-hook 'kill-emacs-hook 'project-x--window-state-write)
+    (remove-hook 'project-find-functions #'project-x-try-local)
+    (remove-hook 'kill-emacs-hook #'project-x--window-state-write)
     (define-key project-prefix-map (kbd "w") nil)
     (define-key project-prefix-map (kbd "j") nil)
     ;; remove dynamic menu advice
