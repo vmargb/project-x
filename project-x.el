@@ -166,16 +166,6 @@ You can specify a single filename or a list of names."
   "Return root directory of current PROJECT."
   (cdr project))
 
-(defun project-x-try-local (dir)
-  "Determine if DIR is a non-VC project.
-DIR must include a .project file to be considered a project."
-  (if-let ((root (if (listp project-x-local-identifier)
-                     (seq-some (lambda (n)
-                                 (locate-dominating-file dir n))
-                               project-x-local-identifier)
-                   (locate-dominating-file dir project-x-local-identifier))))
-      (cons 'local root)))
-
 ;; now supports emacs 29+ project-vc-root-marker while keeping
 ;; backwards compatibility with project-x-local-identifier
 (defun project-x-try-local (dir)
@@ -227,33 +217,25 @@ simply re-register the project in memory."
 ;; -------------------------------------
 (defun project-x--dynamic-switch-commands (orig-fun dir &rest args)
   "Dynamically include 'Restore windows' to ARGS in ORIG-FUN if a saved state exists for DIR."
-  (unless project-x-window-alist (project-x--window-state-read)) ;; ensure latest state
-
-  (let* (;; normalize the path (resolves ~/ & enforces trailing slash)
-         (target-dir (file-name-as-directory (expand-file-name dir)))
-         ;; checks normalized strings against the alist keys
-         (has-session (catch 'found
-                        (dolist (state project-x-window-alist)
-                          (when (string= target-dir
-                                         (file-name-as-directory (expand-file-name (car state))))
-                            (throw 'found t)))))
-
+  (unless project-x-window-alist (project-x--window-state-read))
+  (let* ((target-dir (file-name-as-directory (expand-file-name dir))) ;; normalize path
+         (has-session (seq-find (lambda (entry) ;; check normalized against alist keys
+                                  (string= target-dir
+                                           (file-name-as-directory
+                                            (expand-file-name (car entry)))))
+                                project-x-window-alist))
          (cmd-entry '(project-x-windows "Restore windows" ?j))
-
-         ;; dynamically bind the command list (only if it's a list)
-         (project-switch-commands
+         (project-switch-commands ;; dynamically bind the command list
           (if (listp project-switch-commands)
-              (if has-session
-                  ;; add it if it's missing (to avoid duplicates)
+              (if has-session ;; add it if its missing (to avoid duplicates)
                   (if (member cmd-entry project-switch-commands)
                       project-switch-commands
                     (append project-switch-commands (list cmd-entry)))
-                ;; else remove it if present
                 (seq-remove (lambda (cmd) (eq (car-safe cmd) 'project-x-windows))
                             project-switch-commands))
             ;; else if project-switch-commands is a symbol, leave it alone
             project-switch-commands)))
-    ;; execute project switch with this temporary environment
+    ;; execute project switch with the temporary environment
     (apply orig-fun dir args)))
 
 ;;;###autoload
