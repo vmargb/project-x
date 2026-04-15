@@ -176,6 +176,29 @@ DIR must include a .project file to be considered a project."
                    (locate-dominating-file dir project-x-local-identifier))))
       (cons 'local root)))
 
+;; More reliably add local projects + root markers to project list in one go
+(defun project-x-add-local-project (&optional dir)
+  "Create a project marker file in DIR and register it with `project.el'.
+Marker filename is derived from `project-x-local-identifier'."
+  (interactive "DDirectory for project root: ")
+  (let* ((dir (or dir default-directory))
+         (dir (file-name-as-directory (expand-file-name dir)))
+         ;; extract the marker name, handling both string and list formats
+         (marker-name (if (listp project-x-local-identifier)
+                          (car project-x-local-identifier)
+                        project-x-local-identifier))
+         (marker-file (expand-file-name marker-name dir)))
+    (if (file-exists-p marker-file)
+        (message "Project marker '%s' already exists in %s" marker-name dir)
+      ;; else create the marker file and add it to project.el
+      (with-temp-buffer (write-file marker-file))
+      (when-let ((project (project-current nil dir)))
+        (project-remember-project project))
+      (message "Added %s marker and registered project at %s" marker-name dir))))
+
+
+;; Context-aware restore session advice to project.el
+;; -------------------------------------
 (defun project-x--dynamic-switch-commands (orig-fun dir &rest args)
   "Dynamically include 'Restore windows' to ARGS in ORIG-FUN if a saved state exists for DIR."
   (unless project-x-window-alist (project-x--window-state-read)) ;; ensure latest state
