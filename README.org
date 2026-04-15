@@ -2,8 +2,13 @@
 #+author: Karthik Chikmagalur
 #+STARTUP: nofold
 
-- /New in v 0.1.6:/ =project-x-local-identifier= can now be a list of file names
-- /New in v 0.1.5:/ Autosave the state of the active project periodically. 
+* Maintenance Notice                                                      :UPDATED:
+As of 2026, this package is maintained by [[https://github.com/vmargb][@vmargb]]. Original author: [[https://github.com/karthink][Karthik Chikmagalur]].
+
+* Changelog
+- /New in v0.2.0:/ More reliable utilization of =project-switch-project= (+ Emacs 30 support)
+- /New in v0.1.6:/ =project-x-local-identifier= can now be a list of file names
+- /New in v0.1.5:/ Autosave the state of the active project periodically. 
 
 Project-X adds a couple of convenience features for Emacs' =project.el= library.
 
@@ -81,18 +86,18 @@ There are three customization options right now:
 *** Session management
 The =project-x-mode= minor-mode is provided for convenience. It enables these features:
 
-| Keybinding  | Command                     | Effect                                  |
-|-------------+-----------------------------+-----------------------------------------|
-| =C-x p w=   | =project-x-window-state-save= | Save your current project session       |
-| =C-x p j=   | =project-x-window-state-load= | Load session from a project             |
-| =C-x p p j= | =project-x-windows=           | Load session from project dispatch menu |
+| Keybinding | Command                     | Effect                                  |
+|------------+-----------------------------+-----------------------------------------|
+| =C-x p w=  | =project-x-window-state-save= | Save your current project session       |
+| =C-x p j=    | =project-x-window-state-load= | Load session from a project             |
+| =C-x p p j=  | =project-x-windows=           | Load session from project dispatch menu |
 
 Save a project session with =C-x p w= and you should be able to load it any time across Emacs sessions.
 
 You can go back to your previous window configuration with =winner-undo=.
 
 *** 'Local' projects
-To recognize 'local' projects with a ".project" file somewhere in the path, turn on =project-x-mode= OR run
+To recognize 'local' projects with a ".project.el" root marker somewhere in the path, turn on =project-x-mode= OR run
 #+begin_src emacs-lisp
   (add-hook 'project-find-functions 'project-x-try-local 90)
 #+end_src
@@ -108,8 +113,6 @@ All =project.el= features should work as expected.
 - The only state saved is your project files, project =dired= buffers and the current frame configuration. No minor modes, registers or special buffers (shells, help buffers etc) are recorded. For complete recall you can look into the Desktop library for Emacs.
   
 - If you use multiple Emacs instances the project states saved to disk can get overwritten.
-
-- /Implemented in v0.1.5/: +Your project state needs to be manually saved to be restored. I'm looking into auto-saving the state any time a project buffer is opened or window displayed, or when switching projects.+
 
 ** Alternatives
 *** How does this compare with...
@@ -131,8 +134,15 @@ See [[id:c1326cad-5dd9-4789-8e5e-74f5b012b546][Limitations]]. Desktop restores y
 =project.el= is still very basic in its features and =project-x= is a small addition to it. However, as far as I know Projectile does not offer the ability to save and restore your project sessions (including window configurations).
 
 ** Planned features
-- [X] Autosave the current project configuration when opening project files or switching projects.
-- Save the window configuration across frames and tabs instead of only the current one.
+- [X] Autosave the current project configuration when opening project files or switching projects.  ;; ← Already done in v0.1.5
+- [X] Improve reliability of session restoration via =project-switch-project=  ;; ← done in v0.2.0
+- [ ] Save the window configuration across frames and tabs instead of only the current one.
+
+** Contributing                                                            :NEW:
+Contributions are welcome! Please:
+1. Open an issue to discuss the change you'd like to make
+2. Fork the repository and create a feature branch
+3. Submit a pull request with a clear description of your changes
 
 ** Technical notes
 Since this library uses the built in Emacs API to store the state, it is very compact. The machinery to maintain and recreate project states is only four short =defun='s. Likewise implementing a 'local' project backend is fewer than ten lines of code.

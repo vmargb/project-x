@@ -1,10 +1,12 @@
 ;;; project-x.el --- Extra convenience features for project.el -*- lexical-binding: t -*-
 
 ;; Copyright (C) 2021  Karthik Chikmagalur
+;; Copyright (C) 2026  vmargb
 
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
-;; URL: https://github.com/karthink/project-x
-;; Version: 0.1.5
+;; Maintainer: vmargb <https://github.com/vmargb>
+;; URL: https://github.com/vmargb/project-x
+;; Version: 0.2.0
 ;; Package-Requires: ((emacs "27.1"))
 
 ;; This file is NOT part of GNU Emacs.
@@ -41,8 +43,8 @@
 ;; `project-x-save-interval': Interval in seconds between autosaves of the
 ;; current project.
 ;;
-;; by Karthik Chikmagalur
-;; <karthik.chikmagalur@gmail.com>
+;; As of 15/04/2026, this package is maintained by vmargb.
+;; Original author: Karthik Chikmagalur.
 
 ;;; Code:
 
