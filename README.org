@@ -6,7 +6,7 @@
 As of 2026, this package is maintained by [[https://github.com/vmargb][@vmargb]]. Original author: [[https://github.com/karthink][Karthik Chikmagalur]].
 
 * Changelog
-- /New in v0.2.0:/ More reliable utilization of =project-switch-project= (+ Emacs 30 support)
+- /New in v0.2.0:/ =project-x-add-local-project=, more reliable utilization of =project-switch-project= (+ Emacs 30 support)
 - /New in v0.1.6:/ =project-x-local-identifier= can now be a list of file names
 - /New in v0.1.5:/ Autosave the state of the active project periodically. 
 
@@ -70,7 +70,7 @@ OR, to automatically reload the windows when switching to a project,
     (add-hook 'kill-emacs-hook 'project-x--window-state-write)
     (setq project-switch-commands #'project-x-windows)
     :bind (("C-x p w" . project-x-window-state-save)
-	   ("C-x p j" . project-x-window-state-load))))
+	   ("C-x p j" . project-x-window-state-load)))
 #+end_src
 
 There are three customization options right now:
