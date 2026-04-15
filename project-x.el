@@ -176,6 +176,27 @@ DIR must include a .project file to be considered a project."
                    (locate-dominating-file dir project-x-local-identifier))))
       (cons 'local root)))
 
+;; now supports emacs 29+ project-vc-root-marker while keeping
+;; backwards compatibility with project-x-local-identifier
+(defun project-x-try-local (dir)
+  "Determine if DIR is a local project.
+Checks both `project-x-local-identifier' and Emacs 29's
+`project-vc-extra-root-markers'.  Returns the nearest (deepest)
+matching root as a `local' project."
+  (let* ((local-markers (if (listp project-x-local-identifier)
+                            project-x-local-identifier
+                          (list project-x-local-identifier)))
+         (vc-extra (and (boundp 'project-vc-extra-root-markers) ;; safely check
+                        project-vc-extra-root-markers))
+         (vc-extra-list (if (listp vc-extra) vc-extra (list vc-extra)))
+         ;; combine, deduplicate, and filter nils
+         (all-markers (seq-uniq (seq-filter #'stringp
+                                            (append local-markers vc-extra-list))))
+         ;; find all matching roots and pick the deepest one
+         (roots (delq nil (mapcar (lambda (m) (locate-dominating-file dir m)) all-markers))))
+    (when roots
+      (cons 'local (car (sort roots (lambda (a b) (> (length a) (length b)))))))))
+
 ;; More reliably add local projects + root markers to project list in one go
 (defun project-x-add-local-project (&optional dir)
   "Create a project marker file in DIR and register it with `project.el'.
