@@ -71,7 +71,6 @@
 
 (defcustom project-x-save-interval nil
   "Saves the current project state with this interval.
-
 When set to nil auto-save is disabled."
   :type '(choice (const :tag "Disabled" nil)
                  integer)
@@ -108,6 +107,12 @@ If FILE is specified, read from it instead."
                (message (format "Could not read %s" project-x-window-list-file)))
            (error (message (format "Could not read %s" project-x-window-list-file)))))))
 
+;; helper to normalize the path for a project consistently
+(defun project-x--project-root-key (dir)
+  "Return a normalized alist key for project DIR."
+  (file-name-as-directory (expand-file-name dir)))
+
+
 (defun project-x-window-state-save (&optional arg)
   "Save current window state of project.
 With optional prefix argument ARG, query for project."
@@ -115,6 +120,7 @@ With optional prefix argument ARG, query for project."
   (when-let* ((dir (cond (arg (project-prompt-project-dir))
                          ((project-current)
                           (project-root (project-current)))))
+              (dir (project-x--project-root-key dir))
               (default-directory dir))
     (unless project-x-window-alist (project-x--window-state-read))
     (let ((file-list))
@@ -131,26 +137,55 @@ With optional prefix argument ARG, query for project."
     (project-x--window-state-write) ;; save to disk
     (message (format "Saved project state for %s" dir))))
 
-(defun project-x-window-state-load (dir)
-  "Load the saved window state for project with directory DIR.
-If DIR is unspecified query the user for a project instead."
-  (interactive (list (project-prompt-project-dir)))
+
+;; actual restore session happens here, once confirmed
+;; that a session does exist for the selected project
+(defun project-x--window-state-restore (dir)
+  "Restore the saved window state for project directory DIR.
+Return non-nil when a saved state was found."
   (unless project-x-window-alist (project-x--window-state-read))
-  (if-let* ((project-x-window-alist)
-            (project-state (alist-get dir project-x-window-alist
-                                      nil nil 'equal)))
+  (if-let* ((project-state (alist-get (project-x--project-root-key dir)
+                                      project-x-window-alist nil nil 'equal)))
       (let ((file-list (alist-get 'files project-state))
             (window-config (alist-get 'windows project-state)))
-        (dolist (file-name file-list nil)
-          (find-file file-name))
+        (dolist (file-name file-list)
+          (find-file-noselect file-name))
         (window-state-put window-config nil 'safe)
-        (message (format "Restored project state for %s" dir)))
-    (message (format "No saved window state for project %s" dir))))
+        t)
+    nil))
+
+;; midway helper that routes both project-switch-project
+;; and project-x-window-state-load into project-x--window-state-restore
+;; only if a session for the current project exists
+(defun project-x--restore-session-command ()
+  "Restore the saved window state for the current project.
+Used as the direct command executed by `project-switch-project'."
+  (interactive)
+  (if-let* ((project (project-current nil))
+          (dir (project-root project)))
+      (if (project-x--window-state-restore dir)
+          (message (format "Restored project state for %s" dir))
+        (message (format "No saved window state for project %s" dir)))
+    (message "No current project")))
+
+;; window-state-load routes to project-switch-project and
+;; immediately restores session without prompting (avoids infinite recursion)
+(defun project-x-window-state-load (dir)
+  "Switch to DIR with `project-switch-project' and restore its saved session.
+If DIR is unspecified query the user for a project instead."
+  (interactive (list (project-prompt-project-dir)))
+  (let ((project-switch-commands 'project-x--restore-session-command))
+    (project-switch-project dir)))
 
 (defun project-x-windows ()
-  "Restore the last saved window state of the chosen project."
+  "Restore the last saved window state of the current project."
   (interactive)
-  (project-x-window-state-load (project-root (project-current))))
+  (if-let* ((project (project-current nil))
+          (dir (project-root project)))
+      (if (project-x--window-state-restore dir)
+          (message (format "Restored project state for %s" dir))
+        (message (format "No saved window state for project %s" dir)))
+    (message "No current project")))
 
 ;; Recognize directories as projects by defining a new project backend `local'
 ;; -------------------------------------
@@ -218,11 +253,10 @@ simply re-register the project in memory."
 (defun project-x--dynamic-switch-commands (orig-fun dir &rest args)
   "Dynamically include 'Restore windows' to ARGS in ORIG-FUN if a saved state exists for DIR."
   (unless project-x-window-alist (project-x--window-state-read))
-  (let* ((target-dir (file-name-as-directory (expand-file-name dir))) ;; normalize path
-         (has-session (seq-find (lambda (entry) ;; check normalized against alist keys
+  (let* ((target-dir (project-x--project-root-key dir))
+         (has-session (seq-find (lambda (entry)
                                   (string= target-dir
-                                           (file-name-as-directory
-                                            (expand-file-name (car entry)))))
+                                           (project-x--project-root-key (car entry))))
                                 project-x-window-alist))
          (cmd-entry '(project-x-windows "Restore windows" ?j))
          (project-switch-commands ;; dynamically bind the command list
