@@ -5,16 +5,17 @@
 * Maintenance Notice                                                      :UPDATED:
 As of 2026, this package is maintained by [[https://github.com/vmargb][@vmargb]]. Original author: [[https://github.com/karthink][Karthik Chikmagalur]].
 
-* Changelog
-- /New in v0.2.0:/ =project-x-add-local-project=, more reliable utilization of =project-switch-project= (+ Emacs 30 support)
-- /New in v0.1.6:/ =project-x-local-identifier= can now be a list of file names
-- /New in v0.1.5:/ Autosave the state of the active project periodically. 
+* Project-x
+** What problem does this solve? (project vs session management)
+Having to learn two different sets of keybindings.
 
-Project-X adds a couple of convenience features for Emacs' =project.el= library.
+The traditional Emacs workflow is to use project.el or projectile for *project management*, while using *session management* packages to handle the creation of "sessions" and restoring that session the way you left it(which may include a project). Now these packages do offer more than what I just described, but in many peoples workflows, they are mostly used for this basic separation of concerns.
 
-- Recognize any directory with a =.project= file as a project (name customizable). Also works if any parent directory has this file.
-  
-- Save and restore project files and window configurations across sessions. Project-X will load all /saved project/ files and directories (as =dired= buffers) and try to recreate the window configuration at the time of saving. Project-X can also auto-save your current project's window configuration regularly.
+Project-x collapses that split: every project is treated as a session, and restoring a session is identical to restoring the project. That means you keep the exact project.el keybindings you already know, while Project-x transparently handles saving, restoring, and syncing the project’s session state (buffers, windows, point, etc.). So:
+- =project-switch-project= now opens/changes sessions too
+- =project-kill-buffers= closes & optionally saves the session where you left it
+
+*Note:* If you pair this up with Emacs 27's =tab-bar-mode= or something like [[https://github.com/abougouffa/one-tab-per-project][one-tab-per-project]], you can *quick-switch* between your already opened sessions using =tab-bar-switch-to-tab= (once again, no new commands). Perhaps this process will be automated in a future update of project-x.
 
   + Enhanced project switching: When you switch projects you switch window configurations too, (re)opening files as needed.
     #+ATTR_ORG: :width 500
@@ -27,10 +28,6 @@ Project-X adds a couple of convenience features for Emacs' =project.el= library.
     [[file:project-switching-2.gif]]
 
 
-While Emacs has many built-in features to save and restore state (bookmarks, desktop, window-configurations and more) none of them allow you to bookmark and switch to, across Emacs sessions, a collection of files, buffers and windows together as a unit... or project. Hence project-x.
-
-More features are planned, but note that Emacs' project library is a young project. As it is developed, some or all of the features in project-x might become obsolete. (In fact, that would be great.)
-
 ** Setup and customization
 Load =project-x.el=, then run =(project-x-mode +1)=.
 
@@ -40,7 +37,7 @@ OR, with =use-package=:
     :load-path "~/path/to/project-x/"
     :after project
     :config
-    (setq project-x-save-interval 600)    ;Save project state every 10 min
+    (setq project-x-save-interval 600) ;Save project state every 10 min
     (project-x-mode 1))
 #+end_src
 
@@ -86,11 +83,13 @@ There are three customization options right now:
 *** Session management
 The =project-x-mode= minor-mode is provided for convenience. It enables these features:
 
-| Keybinding | Command                     | Effect                                  |
-|------------+-----------------------------+-----------------------------------------|
-| =C-x p w=  | =project-x-window-state-save= | Save your current project session       |
-| =C-x p j=    | =project-x-window-state-load= | Load session from a project             |
-| =C-x p p j=  | =project-x-windows=           | Load session from project dispatch menu |
+| Keybinding | Command                     | Effect                                      |
+|------------+-----------------------------+---------------------------------------------|
+| =C-x p w=    | =project-x-window-state-save= | Manually save your current project session  |
+| =C-x p j=    | =project-x-window-state-load= | Load session from a project                 |
+| =C-x p p j=  | =project-x-windows=           | Load session from project dispatch menu     |
+| C-x p a    | project-x-add-local-project | Add project + root marker to project switch |
+|            |                             |                                             |
 
 Save a project session with =C-x p w= and you should be able to load it any time across Emacs sessions.
 
@@ -149,4 +148,7 @@ Since this library uses the built in Emacs API to store the state, it is very co
 
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slow down please raise an issue and I will consider reimplementing it as a hash table.
 
-
+* Changelog
+- /New in v0.2.0:/ =project-x-add-local-project=, more reliable use of =project-switch-project= (+ Emacs 30 support)
+- /New in v0.1.6:/ =project-x-local-identifier= can now be a list of file names
+- /New in v0.1.5:/ Autosave the state of the active project periodically. 
