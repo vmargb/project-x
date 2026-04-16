@@ -2,16 +2,13 @@
 #+author: Karthik Chikmagalur
 #+STARTUP: nofold
 
-* Maintenance Notice                                                      :UPDATED:
-As of 2026, this package is maintained by [[https://github.com/vmargb][@vmargb]]. Original author: [[https://github.com/karthink][Karthik Chikmagalur]].
-
 * Project-x
 ** What problem does this solve? (project vs session management)
-Having to learn two different sets of keybindings.
+Having to learn two different sets of commands.
 
 The traditional Emacs workflow is to use project.el or projectile for *project management*, while using *session management* packages to handle the creation of "sessions" and restoring that session the way you left it(which may include a project). Now these packages do offer more than what I just described, but in many peoples workflows, they are mostly used for this basic separation of concerns.
 
-Project-x collapses that split: every project is treated as a session, and restoring a session is identical to restoring the project. That means you keep the exact project.el keybindings you already know, while Project-x transparently handles saving, restoring, and syncing the project’s session state (buffers, windows, point, etc.). So:
+Project-x collapses that split: every project is treated as a session, and restoring a session is identical to restoring the project. That means you keep the exact =project.el= keybindings you already know, while Project-x transparently handles saving, restoring, and syncing the project’s session state (buffers, windows, point, etc.). So:
 - =project-switch-project= now opens/changes sessions too
 - =project-kill-buffers= closes & optionally saves the session where you left it
 
@@ -88,12 +85,12 @@ The =project-x-mode= minor-mode is provided for convenience. It enables these fe
 | =C-x p w=    | =project-x-window-state-save= | Manually save your current project session  |
 | =C-x p j=    | =project-x-window-state-load= | Load session from a project                 |
 | =C-x p p j=  | =project-x-windows=           | Load session from project dispatch menu     |
-| C-x p a    | project-x-add-local-project | Add project + root marker to project switch |
+| =C-x p a= | =project-x-add-local-project= | Add project + root marker to project switch |
 |            |                             |                                             |
 
 Save a project session with =C-x p w= and you should be able to load it any time across Emacs sessions.
 
-You can go back to your previous window configuration with =winner-undo=.
+You can go back to your previous window configuration with =winner-undo=, or use =tab-bar-mode=.
 
 *** 'Local' projects
 To recognize 'local' projects with a ".project.el" root marker somewhere in the path, turn on =project-x-mode= OR run
@@ -137,7 +134,11 @@ See [[id:c1326cad-5dd9-4789-8e5e-74f5b012b546][Limitations]]. Desktop restores y
 - [X] Improve reliability of session restoration via =project-switch-project=  ;; ← done in v0.2.0
 - [ ] Save the window configuration across frames and tabs instead of only the current one.
 
-** Contributing                                                            :NEW:
+  
+** Maintenance Notice                                                :UPDATED:
+As of 2026, this package is maintained by [[https://github.com/vmargb][@vmargb]]. Original author: [[https://github.com/karthink][Karthik Chikmagalur]].
+
+*** Contributing                                                      :NEW:
 Contributions are welcome! Please:
 1. Open an issue to discuss the change you'd like to make
 2. Fork the repository and create a feature branch
