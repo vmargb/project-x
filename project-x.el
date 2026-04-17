@@ -168,6 +168,7 @@ Used as the direct command executed by `project-switch-project'."
         (message (format "No saved window state for project %s" dir)))
     (message "No current project")))
 
+;; project-x-window-state-load -> project-switch-project -> project-x--restore-session
 ;; window-state-load routes to project-switch-project and
 ;; immediately restores session without prompting (avoids infinite recursion)
 (defun project-x-window-state-load (dir)
@@ -182,7 +183,7 @@ If DIR is unspecified query the user for a project instead."
   (interactive)
   (if-let* ((project (project-current nil))
           (dir (project-root project)))
-      (if (project-x--window-state-restore dir)
+      (if (project-x--window-state-restore dir) ;; restore if in project
           (message (format "Restored project state for %s" dir))
         (message (format "No saved window state for project %s" dir)))
     (message "No current project")))
