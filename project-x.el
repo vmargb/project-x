@@ -34,6 +34,8 @@
 ;;
 ;; project-x-window-state-save : Save the window configuration of currently open project buffers
 ;; project-x-window-state-load : Load a previously saved project window configuration
+;; project-x-add-local-project : Conveniently add project + root marker to any dir
+;; project-x-rename-session    : Rename the current project's display label
 ;;
 ;; CUSTOMIZATION:
 ;;
@@ -49,10 +51,13 @@
 ;;; Code:
 
 (require 'project)
-(eval-when-compile (require 'subr-x))
-(eval-when-compile (require 'seq))
+(require 'cl-lib)
+(require 'subr-x)
+(require 'seq)
+
 (defvar project-prefix-map)
 (defvar project-switch-commands)
+
 (declare-function project-prompt-project-dir "project")
 (declare-function project--buffer-list "project")
 (declare-function project-buffers "project")
@@ -112,6 +117,64 @@ If FILE is specified, read from it instead."
   "Return a normalized alist key for project DIR."
   (file-name-as-directory (expand-file-name dir)))
 
+(defun project-x--ensure-window-state-loaded ()
+  "Load the saved session file into memory when needed."
+  (unless project-x-window-alist
+    (project-x--window-state-read)))
+
+(defun project-x--session-entry (dir)
+  "Return the saved session entry for DIR, or nil."
+  (project-x--ensure-window-state-loaded)
+  (alist-get (project-x--project-root-key dir) project-x-window-alist nil nil #'equal))
+
+(defun project-x--session-has-window-state-p (dir)
+  "Return non-nil when DIR has a saved window state."
+  (and-let* ((entry (project-x--session-entry dir)))
+    (alist-get 'windows entry)))
+
+(defun project-x--default-session-label (dir)
+  "Return a sensible default label for DIR."
+  (file-name-nondirectory
+   (directory-file-name (project-x--project-root-key dir))))
+
+(defun project-x--session-label (dir)
+  "Return the friendly label for DIR, falling back to a default."
+  (or (alist-get 'label (project-x--session-entry dir))
+      (project-x--default-session-label dir)))
+
+(defun project-x--set-session-entry (dir entry)
+  "Store ENTRY for DIR and keep the in-memory alist normalized."
+  (setf (alist-get (project-x--project-root-key dir)
+                   project-x-window-alist nil nil #'equal)
+        entry)
+  entry)
+
+(defun project-x--current-project-root ()
+  "Return the current project root or nil."
+  (when-let* ((project (project-current nil)))
+    (project-root project)))
+
+(defun project-x--current-project-root-or-error ()
+  "Return the current project root, signaling an error when absent."
+  (or (project-x--current-project-root)
+      (user-error "No current project")))
+
+(defun project-x--current-session-label ()
+  "Return the label for the current project."
+  (project-x--session-label (project-x--current-project-root-or-error)))
+
+(defun project-x-rename-session (label)
+  "Rename the current project's session to LABEL.
+This changes only the display name, not the project directory."
+  (interactive
+   (list (read-string "Session label: "
+                      (project-x--current-session-label))))
+  (let* ((dir (project-x--current-project-root-or-error))
+         (entry (copy-tree (or (project-x--session-entry dir) nil))))
+    (setf (alist-get 'label entry) label)
+    (project-x--set-session-entry dir entry)
+    (project-x--window-state-write)
+    (message "Renamed session for %s to %s" dir label)))
 
 (defun project-x-window-state-save (&optional arg)
   "Save current window state of project.
@@ -123,7 +186,8 @@ With optional prefix argument ARG, query for project."
               (dir (project-x--project-root-key dir))
               (default-directory dir))
     (unless project-x-window-alist (project-x--window-state-read))
-    (let ((file-list))
+    (let ((file-list)
+          (label (project-x--session-label dir)))
       ;; Collect file-list of all the open project buffers
       (dolist (buf (project-buffers (project-current)) file-list)
         (if-let ((file-name (or (buffer-file-name buf)
@@ -131,12 +195,13 @@ With optional prefix argument ARG, query for project."
                                   (and (derived-mode-p 'dired-mode)
                                        dired-directory)))))
             (push file-name file-list)))
-      (setf (alist-get dir project-x-window-alist nil nil 'equal)
-            (list (cons 'files file-list)
-                  (cons 'windows (window-state-get nil t)))))
+      (project-x--set-session-entry
+       dir
+       (list (cons 'label label)
+             (cons 'files file-list)
+             (cons 'windows (window-state-get nil t)))))
     (project-x--window-state-write) ;; save to disk
     (message (format "Saved project state for %s" dir))))
-
 
 ;; actual restore session happens here, once confirmed
 ;; that a session does exist for the selected project
@@ -144,10 +209,9 @@ With optional prefix argument ARG, query for project."
   "Restore the saved window state for project directory DIR.
 Return non-nil when a saved state was found."
   (unless project-x-window-alist (project-x--window-state-read))
-  (if-let* ((project-state (alist-get (project-x--project-root-key dir)
-                                      project-x-window-alist nil nil 'equal)))
-      (let ((file-list (alist-get 'files project-state))
+  (if-let* ((project-state (project-x--session-entry dir))
             (window-config (alist-get 'windows project-state)))
+      (let ((file-list (alist-get 'files project-state)))
         (dolist (file-name file-list)
           (find-file-noselect file-name))
         (window-state-put window-config nil 'safe)
@@ -162,7 +226,7 @@ Return non-nil when a saved state was found."
 Used as the direct command executed by `project-switch-project'."
   (interactive)
   (if-let* ((project (project-current nil))
-          (dir (project-root project)))
+            (dir (project-root project)))
       (if (project-x--window-state-restore dir)
           (message (format "Restored project state for %s" dir))
         (message (format "No saved window state for project %s" dir)))
@@ -174,7 +238,7 @@ Used as the direct command executed by `project-switch-project'."
 (defun project-x-window-state-load (dir)
   "Switch to DIR with `project-switch-project' and restore its saved session.
 If DIR is unspecified query the user for a project instead."
-  (interactive (list (project-prompt-project-dir)))
+  (interactive (list (funcall project-prompter)))
   (let ((project-switch-commands 'project-x--restore-session-command))
     (project-switch-project dir)))
 
@@ -182,7 +246,7 @@ If DIR is unspecified query the user for a project instead."
   "Restore the last saved window state of the current project."
   (interactive)
   (if-let* ((project (project-current nil))
-          (dir (project-root project)))
+            (dir (project-root project)))
       (if (project-x--window-state-restore dir) ;; restore if in project
           (message (format "Restored project state for %s" dir))
         (message (format "No saved window state for project %s" dir)))
@@ -201,6 +265,10 @@ You can specify a single filename or a list of names."
 (cl-defmethod project-root ((project (head local)))
   "Return root directory of current PROJECT."
   (cdr project))
+
+(cl-defmethod project-name ((project (head local)))
+  "Return a human-friendly name for PROJECT."
+  (project-x--session-label (project-root project)))
 
 ;; now supports emacs 29+ project-vc-root-marker while keeping
 ;; backwards compatibility with project-x-local-identifier
@@ -248,17 +316,13 @@ simply re-register the project in memory."
           (message "Registered project at %s" dir))
       (message "Could not recognize %s as a project. Ensure project-x-mode is active." dir))))
 
-
 ;; Context-aware restore session advice to project.el
 ;; -------------------------------------
 (defun project-x--dynamic-switch-commands (orig-fun dir &rest args)
   "Dynamically include 'Restore windows' to ARGS in ORIG-FUN if a saved state exists for DIR."
   (unless project-x-window-alist (project-x--window-state-read))
-  (let* ((target-dir (project-x--project-root-key dir))
-         (has-session (seq-find (lambda (entry)
-                                  (string= target-dir
-                                           (project-x--project-root-key (car entry))))
-                                project-x-window-alist))
+  (let* ((target-dir (file-name-as-directory (expand-file-name dir))) ;; normalize path
+         (has-session (project-x--session-has-window-state-p target-dir))
          (cmd-entry '(project-x-windows "Restore windows" ?j))
          (project-switch-commands ;; dynamically bind the command list
           (if (listp project-switch-commands)
@@ -272,6 +336,21 @@ simply re-register the project in memory."
             project-switch-commands)))
     ;; execute project switch with the temporary environment
     (apply orig-fun dir args)))
+
+
+(defun project-x--project-prompt ()
+  "Use `project-prompter' to inject custom prompt to `project-switch-project'."
+  (let* ((dirs (project-known-project-roots))
+         (projects (delq nil (mapcar #'project--find-in-directory dirs)))
+         (choices
+          (mapcar
+           (lambda (proj)
+             (let* ((root (project-root proj))
+                    (label (project-x--session-label root)))
+               (cons (format "%s" label) root)))
+           projects)))
+    (cdr (assoc (completing-read "Switch to project: " choices nil t)
+                choices))))
 
 ;;;###autoload
 (define-minor-mode project-x-mode
@@ -291,6 +370,8 @@ contains) a special file as a project."
         (project-x--window-state-read)
         (define-key project-prefix-map (kbd "w") #'project-x-window-state-save)
         (define-key project-prefix-map (kbd "j") #'project-x-window-state-load)
+        (define-key project-prefix-map (kbd "a") #'project-x-add-local-project)
+        (define-key project-prefix-map (kbd "r") #'project-x-rename-session)
         (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
 
         (when project-x-save-interval
@@ -303,6 +384,8 @@ contains) a special file as a project."
     (remove-hook 'kill-emacs-hook #'project-x--window-state-write)
     (define-key project-prefix-map (kbd "w") nil)
     (define-key project-prefix-map (kbd "j") nil)
+    (define-key project-prefix-map (kbd "a") nil)
+    (define-key project-prefix-map (kbd "r") nil)
     ;; remove dynamic menu advice
     (advice-remove 'project-switch-project #'project-x--dynamic-switch-commands)
 

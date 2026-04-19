@@ -34,6 +34,7 @@ OR, with =use-package=:
     :after project
     :config
     (setq project-x-save-interval 600) ;Save project state every 10 min
+    (setq project-prompter #'project-x--project-prompt) ; use our prompter (optional)
     (project-x-mode 1))
 #+end_src
 
@@ -79,15 +80,16 @@ There are three customization options right now:
 *** Session management
 The =project-x-mode= minor-mode is provided for convenience. It enables these features:
 
-| Keybinding | Command                     | Effect                                      |
-|------------+-----------------------------+---------------------------------------------|
-| =C-x p w=    | =project-x-window-state-save= | Manually save your current project session  |
-| =C-x p j=    | =project-x-window-state-load= | Load session from a project                 |
-| =C-x p p j=  | =project-x-windows=           | Load session from project dispatch menu     |
-| =C-x p a= | =project-x-add-local-project= | Add project + root marker to project switch |
-|            |                             |                                             |
+| Keybinding | Command                     | Effect                                     |
+|------------+-----------------------------+--------------------------------------------|
+| =C-x p w=    | =project-x-window-state-save= | Manually save your current project session |
+| =C-x p j=    | =project-x-window-state-load= | Load session from a project                |
+| =C-x p J=  | =project-x-windows=           | Load session from project dispatch menu    |
+| =C-x p a=    | =project-x-add-local-project= | Add project + root marker                  |
+| =C-x p r=    | =project-x-rename-session=    | Rename the session (without changing path) |
 
-Save a project session with =C-x p w= and you should be able to load it any time across Emacs sessions.
+**** Workflow
+After entering a project with =project-switch-project= or =C-x p j=, save the current session state with =C-x p w=, if you make any changes(buffer and window configuration) =C-x p J= will revert back to the /last/ saved session state. To close the session do =project-kill-buffers=, you can load it back at any time which will restore the session. If you want to add a new project(with root marker) do =C-x p a=, and =project-forget-project= to remove it. Lastly to rename a project do =C-x p r= which will only change the name of the /session/ without changing the actual project name or its path.
 
 You can go back to your previous window configuration with =winner-undo=, or use =tab-bar-mode=.
 
