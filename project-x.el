@@ -6,7 +6,7 @@
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
 ;; Maintainer: vmargb <https://github.com/vmargb>
 ;; URL: https://github.com/vmargb/project-x
-;; Version: 0.2.0
+;; Version: 0.2.1
 ;; Package-Requires: ((emacs "27.1"))
 
 ;; This file is NOT part of GNU Emacs.
@@ -359,7 +359,6 @@ When enabled, save and load project window states.
 Recognize any directory that contains (or whose parent
 contains) a special file as a project."
   :global t
-  :version "0.10"
   :lighter ""
   :group 'project-x
   (if project-x-mode

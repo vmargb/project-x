@@ -89,9 +89,11 @@ The =project-x-mode= minor-mode is provided for convenience. It enables these fe
 | =C-x p r=    | =project-x-rename-session=    | Rename the session (without changing path) |
 
 **** Workflow
-After entering a project with =project-switch-project= or =C-x p j=, save the current session state with =C-x p w=, if you make any changes(buffer and window configuration) =C-x p J= will revert back to the /last/ saved session state. To close the session do =project-kill-buffers=, you can load it back at any time which will restore the session. If you want to add a new project(with root marker) do =C-x p a=, and =project-forget-project= to remove it. Lastly to rename a project do =C-x p r= which will only change the name of the /session/ without changing the actual project name or its path.
+To add a new project(+ root marker) do =C-x p a= with DIR, and to remove it from the project list do =project-forget-project=. Enter the project with =project-switch-project= or =C-x p j=, save the current session state with =C-x p w=.
 
-You can go back to your previous window configuration with =winner-undo=, or use =tab-bar-mode=.
+If you make any changes(buffers, windows etc.) =C-x p J= will revert back to the /last/ saved session state(for the project you are currently in). And optionally use =C-x p r= to rename the project in the list to whatever you want, which will only change the name of the /session/ without touching the actual project name or its path.
+
+To close the session simply use project.el's =project-kill-buffers=. You can go back to your previous window configuration with =winner-undo=, or even better: use Emacs' =tab-bar-mode= or something like Tabspaces/otpp.el.
 
 *** 'Local' projects
 To recognize 'local' projects with a ".project.el" root marker somewhere in the path, turn on =project-x-mode= OR run
@@ -151,6 +153,7 @@ Since this library uses the built in Emacs API to store the state, it is very co
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slow down please raise an issue and I will consider reimplementing it as a hash table.
 
 ** Changelog
-- /New in v0.2.0:/ =project-x-add-local-project=, more reliable use of =project-switch-project= (+ Emacs 30 support)
+- /New in v0.2.1:/ =project-prompter= for cleaner format & =project-x-rename-session= to rename a session.
+- /New in v0.2.0:/ =project-x-add-local-project= & more reliable use of =project-switch-project= (+ Emacs 30 support)
 - /New in v0.1.6:/ =project-x-local-identifier= can now be a list of file names
 - /New in v0.1.5:/ Autosave the state of the active project periodically. 
