@@ -153,6 +153,7 @@ Since this library uses the built in Emacs API to store the state, it is very co
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slow down please raise an issue and I will consider reimplementing it as a hash table.
 
 ** Changelog
+- /New in v0.2.2:/ Fixed a subtle but *major* bug where =squatter-buffers= prevent =project-switch-project= from going through.
 - /New in v0.2.1:/ =project-prompter= for cleaner format & =project-x-rename-session= to rename a session.
 - /New in v0.2.0:/ =project-x-add-local-project= & more reliable use of =project-switch-project= (+ Emacs 30 support)
 - /New in v0.1.6:/ =project-x-local-identifier= can now be a list of file names

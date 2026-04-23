@@ -6,7 +6,7 @@
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
 ;; Maintainer: vmargb <https://github.com/vmargb>
 ;; URL: https://github.com/vmargb/project-x
-;; Version: 0.2.1
+;; Version: 0.2.2
 ;; Package-Requires: ((emacs "27.1"))
 
 ;; This file is NOT part of GNU Emacs.
@@ -205,16 +205,52 @@ With optional prefix argument ARG, query for project."
 
 ;; actual restore session happens here, once confirmed
 ;; that a session does exist for the selected project
+;; -------------------------------------------------------
+;; this has been updated to fix a major bug where identical
+;; buffer-names before and after project-switch will prevent the
+;; switch from happening. I call these files "squatter buffers"
 (defun project-x--window-state-restore (dir)
   "Restore the saved window state for project directory DIR.
 Return non-nil when a saved state was found."
   (unless project-x-window-alist (project-x--window-state-read))
   (if-let* ((project-state (project-x--session-entry dir))
             (window-config (alist-get 'windows project-state)))
-      (let ((file-list (alist-get 'files project-state)))
-        (dolist (file-name file-list)
-          (find-file-noselect file-name))
+      (let* ((file-list (alist-get 'files project-state))
+             ;; open all project files and pair each with the bare name
+             ;; that window-state-put will look up (what the buffer
+             ;; was called when the session was saved).
+             (name-buf-pairs
+              (mapcar (lambda (file-name)
+                        (cons (file-name-nondirectory file-name)
+                              (find-file-noselect file-name)))
+                      file-list))
+             ;; track squatter buffers that already own a bare name so we
+             ;; can restore their names after window-state-put.
+             (squatter-renames nil))
+        ;; for every project buffer that ended up with a uniquified name
+        ;; (like elline.el<2>) because a same-named buffer from another
+        ;; project was already open, temporarily:
+        ;;   1. Rename the squatter out of the way.
+        ;;   2. Give the project buffer the bare name window-state-put expects.
+        (dolist (pair name-buf-pairs)
+          (let* ((expected (car pair))
+                 (buf      (cdr pair)))
+            (unless (string= (buffer-name buf) expected)
+              (when-let ((squatter (get-buffer expected)))
+                (let ((tmp (generate-new-buffer-name
+                            (concat " *px-tmp-" expected "*"))))
+                  (push (cons squatter (buffer-name squatter)) squatter-renames)
+                  (with-current-buffer squatter (rename-buffer tmp))))
+              (with-current-buffer buf (rename-buffer expected)))))
+        ;; restore the window configuration.  Buffer names now match the
+        ;; saved state, so every window will get the right buffer.
         (window-state-put window-config nil 'safe)
+        ;; give squatter buffers their names back (uniquified if needed, so
+        ;; the freshly restored project buffer keeps the bare name).
+        (dolist (pair squatter-renames)
+          (when (buffer-live-p (car pair))
+            (with-current-buffer (car pair)
+              (rename-buffer (cdr pair) t))))
         t)
     nil))
 
