@@ -309,7 +309,6 @@ If DIR is unspecified query the user for a project instead."
 ;; -------------------------------------
 (defcustom project-x-local-identifier ".project"
   "Filename(s) that identifies a directory as a project.
-
 You can specify a single filename or a list of names."
   :type '(choice (string :tag "Single file")
                  (repeat (string :tag "Filename")))
@@ -358,8 +357,9 @@ simply re-register the project in memory."
                           (car project-x-local-identifier)
                         project-x-local-identifier))
          (marker-file (expand-file-name marker-name dir)))
-    ;; create marker only if it doesn't exist
-    (unless (file-exists-p marker-file)
+    ;; create marker only if it doesn't exist or we're not in a git repo
+    (unless (or (file-exists-p marker-file)
+                (file-exists-p (expand-file-name ".git" dir)))
       (with-temp-buffer (write-file marker-file))
       (message "Created project marker '%s' in %s" marker-name dir))
     ;; always attempt to register the project with project.el
