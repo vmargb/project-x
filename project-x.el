@@ -223,7 +223,7 @@ Return non-nil when a saved state was found."
               (mapcar (lambda (file-name)
                         (cons (file-name-nondirectory file-name)
                               (find-file-noselect file-name)))
-                      file-list))
+                      (seq-filter #'file-exists-p file-list)))
              ;; track squatter buffers that already own a bare name so we
              ;; can restore their names after window-state-put.
              (squatter-renames nil))
