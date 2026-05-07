@@ -176,6 +176,23 @@ This changes only the display name, not the project directory."
     (project-x--window-state-write)
     (message "Renamed session for %s to %s" dir label)))
 
+(defun project-x-delete-session (&optional arg)
+  "Delete the saved session for the current project.
+With optional prefix argument ARG, query for a project instead."
+  (interactive "P")
+  (when-let* ((dir (cond (arg (project-prompt-project-dir))
+                         ((project-current)
+                          (project-root (project-current)))))
+              (key (project-x--project-root-key dir)))
+    (project-x--ensure-window-state-loaded)
+    (if (assoc key project-x-window-alist #'equal)
+        (when (yes-or-no-p (format "Delete saved session for %s? " key))
+          (setq project-x-window-alist
+                (cl-remove key project-x-window-alist :key #'car :test #'equal))
+          (project-x--window-state-write)
+          (message "Deleted session for %s" key))
+      (message "No saved session for %s" key))))
+
 (defun project-x-window-state-save (&optional arg)
   "Save current window state of project.
 With optional prefix argument ARG, query for project."
@@ -407,6 +424,7 @@ contains) a special file as a project."
         (define-key project-prefix-map (kbd "j") #'project-x-window-state-load)
         (define-key project-prefix-map (kbd "a") #'project-x-add-local-project)
         (define-key project-prefix-map (kbd "r") #'project-x-rename-session)
+        (define-key project-prefix-map (kbd "d") #'project-x-delete-session)
         (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
 
         (when project-x-save-interval
@@ -421,6 +439,7 @@ contains) a special file as a project."
     (define-key project-prefix-map (kbd "j") nil)
     (define-key project-prefix-map (kbd "a") nil)
     (define-key project-prefix-map (kbd "r") nil)
+    (define-key project-prefix-map (kbd "d") nil)
     ;; remove dynamic menu advice
     (advice-remove 'project-switch-project #'project-x--dynamic-switch-commands)
 
