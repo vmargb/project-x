@@ -87,7 +87,7 @@ The =project-x-mode= minor-mode is provided for convenience. It enables these fe
 | =C-x p J=    | =project-x-windows=           | Load session from project dispatch menu    |
 | =C-x p a=    | =project-x-add-local-project= | Add project + root marker                  |
 | =C-x p r=    | =project-x-rename-session=    | Rename the session (without changing path) |
-| =C-x p d=    | =project-x-delete-session=  | Delete session data |
+| =C-x p c=    | =project-x-clear-session= | Clear session data |
 
 **** Workflow
 To add a new project(+ root marker) do =C-x p a= with DIR, and to remove it from the project list do =project-forget-project=. Enter the project with =project-switch-project= or =C-x p j=, save the current session state with =C-x p w=.

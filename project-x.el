@@ -176,7 +176,7 @@ This changes only the display name, not the project directory."
     (project-x--window-state-write)
     (message "Renamed session for %s to %s" dir label)))
 
-(defun project-x-delete-session (&optional arg)
+(defun project-x-clear-session (&optional arg)
   "Delete the saved session for the current project.
 With optional prefix argument ARG, query for a project instead."
   (interactive "P")
@@ -424,7 +424,7 @@ contains) a special file as a project."
         (define-key project-prefix-map (kbd "j") #'project-x-window-state-load)
         (define-key project-prefix-map (kbd "a") #'project-x-add-local-project)
         (define-key project-prefix-map (kbd "r") #'project-x-rename-session)
-        (define-key project-prefix-map (kbd "d") #'project-x-delete-session)
+        (define-key project-prefix-map (kbd "d") #'project-x-clear-session)
         (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
 
         (when project-x-save-interval
