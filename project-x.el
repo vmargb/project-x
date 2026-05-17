@@ -6,7 +6,7 @@
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
 ;; Maintainer: vmargb <https://github.com/vmargb>
 ;; URL: https://github.com/vmargb/project-x
-;; Version: 0.2.2
+;; Version: 0.2.3
 ;; Package-Requires: ((emacs "27.1"))
 
 ;; This file is NOT part of GNU Emacs.
@@ -205,13 +205,14 @@ With optional prefix argument ARG, query for project."
     (unless project-x-window-alist (project-x--window-state-read))
     (let ((file-list)
           (label (project-x--session-label dir)))
-      ;; Collect file-list of all the open project buffers
+      ;; Collect file-list of all open project buffers
       (dolist (buf (project-buffers (project-current)) file-list)
         (if-let ((file-name (or (buffer-file-name buf)
                                 (with-current-buffer buf
                                   (and (derived-mode-p 'dired-mode)
                                        dired-directory)))))
-            (push file-name file-list)))
+            ;; saves a cons cell of (file-path . buffer-name)
+            (push (cons file-name (buffer-name buf)) file-list)))
       (project-x--set-session-entry
        dir
        (list (cons 'label label)
@@ -233,14 +234,21 @@ Return non-nil when a saved state was found."
   (if-let* ((project-state (project-x--session-entry dir))
             (window-config (alist-get 'windows project-state)))
       (let* ((file-list (alist-get 'files project-state))
-             ;; open all project files and pair each with the bare name
-             ;; that window-state-put will look up (what the buffer
-             ;; was called when the session was saved).
+             ;; open all project files and pair each with the what the
+             ;; buffer was called when the session was saved
+             ;; read the saved buffer name directly to respect `uniquify`
+             ;; fallback cleanly for older saved states without crashing on empty strings
              (name-buf-pairs
-              (mapcar (lambda (file-name)
-                        (cons (file-name-nondirectory file-name)
-                              (find-file-noselect file-name)))
-                      (seq-filter #'file-exists-p file-list)))
+              (delq nil
+                    (mapcar (lambda (item)
+                              (let* ((is-old-format (stringp item))
+                                     (file-name (if is-old-format item (car item)))
+                                     (expected (if is-old-format
+                                                   (file-name-nondirectory (directory-file-name file-name))
+                                                 (cdr item))))
+                                (when (file-exists-p file-name)
+                                  (cons expected (find-file-noselect file-name)))))
+                            file-list)))
              ;; track squatter buffers that already own a bare name so we
              ;; can restore their names after window-state-put.
              (squatter-renames nil))
@@ -262,8 +270,8 @@ Return non-nil when a saved state was found."
         ;; restore the window configuration.  Buffer names now match the
         ;; saved state, so every window will get the right buffer.
         (window-state-put window-config nil 'safe)
-        ;; give squatter buffers their names back (uniquified if needed, so
-        ;; the freshly restored project buffer keeps the bare name).
+        
+        ;; give squatter buffers their names back
         (dolist (pair squatter-renames)
           (when (buffer-live-p (car pair))
             (with-current-buffer (car pair)
