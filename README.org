@@ -11,7 +11,8 @@ Project-x collapses that split: every project is treated as a session, and resto
 
 So:
 - =project-switch-project= now switches sessions too
-- =project-kill-buffers= closes the project and optionally saves its session state right where you left off
+- =project-kill-buffers= closes the project and the session, optionally saving the session state right where you left off
+- =project-forget-project= now automatically clears session data on top of removing the project
 
 *Note:* If you pair this up with Emacs 27's =tab-bar-mode= or something like [[https://github.com/abougouffa/one-tab-per-project][one-tab-per-project]], you can *quick-switch* between your already opened sessions using =tab-bar-switch-to-tab= (once again, no new commands). Perhaps this process will be automated in a future update of project-x.
 
