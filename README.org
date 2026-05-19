@@ -1,5 +1,5 @@
 #+title: Project-X
-#+author: Karthik Chikmagalur
+#+author: vmargb
 #+STARTUP: nofold
 
 ** What problem does this solve? (project vs session management)
@@ -36,7 +36,9 @@ Starting with Emacs 29, you can install packages directly with =package-vc-insta
     :vc (:url "https://github.com/vmargb/project-x")
     :after project
     :config
-    (setq project-x-save-interval 600) ; save project state every 10 min
+    ;; auto-save project state after 5 seconds of idle time
+    ;; set to nil to disable auto-save
+    (setq project-x-auto-save-delay 5)
     (setq project-prompter #'project-x--project-prompt) ; use custom prompter (optional)
     (project-x-mode 1))
 #+end_src
@@ -64,7 +66,7 @@ There are three main customization options right now:
   #+BEGIN_SRC emacs-lisp
     (setq project-x-local-identifier '("package.json" "mix.exs" "Project.toml" ".project"))
   #+END_SRC
-- =project-x-save-interval=: Number of seconds between autosaves of the current project window configuration. Defaults to =nil= (autosave disabled). This requires =project-x-mode= to be turned on.
+- =project-x-auto-save-delay=: Number of seconds of idle time before auto-saving the current project window configuration. Defaults to =nil= (autosave disabled). This requires =project-x-mode= to be turned on. The save is debounced: Emacs must be idle for this many seconds after a window or buffer change before the state is written.
 
 ** Usage
 
@@ -83,9 +85,10 @@ The =project-x-mode= minor-mode is provided for convenience. It defines keys und
 **** Workflow
 1. To add a new project (+ root marker), do =C-x p a= with DIR. To remove it from the project list, do =project-forget-project=.
 2. Enter the project with =project-switch-project= or =C-x p j=, and save the current session state with =C-x p w=.
-3. If you make any changes (buffers, windows, etc.), =C-x p J= will revert back to the /last/ saved session state (for the project you are currently in).
-4. Optionally use =C-x p r= to rename the project in the list. This only changes the name of the /session/ without touching the actual project name or its path.
-5. To close the session, simply use project.el's =project-kill-buffers=.
+3. If =project-x-auto-save-delay= is set, your session is saved automatically once Emacs is idle for the specified number of seconds (e.g. after switching buffers or changing window layout).
+4. If you make any changes (buffers, windows, etc.), =C-x p J= will revert back to the /last/ saved session state (for the project you are currently in).
+5. Optionally use =C-x p r= to rename the project in the list. This only changes the name of the /session/ without touching the actual project name or its path.
+6. To close the session, simply use project.el's =project-kill-buffers=.
 
 *** 'Local' projects
 To recognize 'local' projects with a root marker somewhere in the path, turn on =project-x-mode= OR run:
@@ -100,7 +103,7 @@ All =project.el= features should work as expected (Now works with =project-vc-ex
 :ID:       c1326cad-5dd9-4789-8e5e-74f5b012b546
 :END:
 - This is currently limited to storing only the current frame configuration.
-- The only state saved is your project files, project =dired= buffers, and the current frame configuration. No minor modes, registers, or special buffers (shells, help buffers, etc.) are recorded. For complete recall, look into the built-in Desktop library.
+- The only state saved is your project files, =dired= buffers, =magit-status= buffers, =eshell= buffers, =compilation= buffers, and the current frame configuration. No minor modes, registers, or other special buffers (help buffers, scratch, etc.) are recorded. For complete recall, look into the built-in Desktop library.
 - If you use multiple Emacs instances, the project states saved to disk can get overwritten.
 - This doesn't handle returning to previous state after closing a project. This can be solved either with =winner-undo= or a =tab-bar-mode= based package like =Tabspaces= / =otpp.el=.
 
@@ -144,7 +147,8 @@ Since this library uses the built-in Emacs API to store the state, it is very co
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slowdown, please raise an issue.
 
 ** Changelog
-- /New in v0.2.2:/ Fixed a subtle but *major* bug where Emacs's =uniquify= prevents =project-switch-project= from correctly restoring sessions.
+- /New in v0.2.3:/ Replaced fixed-interval autosave with a debounced idle-timer (=project-x-auto-save-delay=). Added support for saving and restoring =magit-status=, =eshell=, and =compilation= buffers alongside regular file and =dired= buffers. =project-forget-project= now automatically removes session data.
+- /New in v0.2.2:/ Fixed *major* bug where Emacs's =uniquify= prevents =project-switch-project= from correctly restoring sessions. Fixed identical directory and buffer name causing race conditions.
 - /New in v0.2.1:/ =project-prompter= for cleaner format & =project-x-rename-session= to rename a session.
 - /New in v0.2.0:/ =project-x-add-local-project= & more reliable use of =project-switch-project= (+ Emacs 30 support)
 - /New in v0.1.6:/ =project-x-local-identifier= can now be a list of file names

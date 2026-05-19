@@ -8,6 +8,7 @@
 ;; URL: https://github.com/vmargb/project-x
 ;; Version: 0.2.3
 ;; Package-Requires: ((emacs "27.1"))
+;; Keywords: project, convenience, session, tools
 
 ;; This file is NOT part of GNU Emacs.
 
@@ -59,7 +60,6 @@
 (defvar project-switch-commands)
 
 (declare-function project-prompt-project-dir "project")
-(declare-function project--buffer-list "project")
 (declare-function project-buffers "project")
 
 (defgroup project-x nil
@@ -74,18 +74,18 @@
   :type 'file
   :group 'project-x)
 
-(defcustom project-x-save-interval nil
-  "Saves the current project state with this interval.
-When set to nil auto-save is disabled."
+(defcustom project-x-auto-save-delay nil
+  "Seconds of idle time before auto-saving project state.
+Set to nil to disable auto-save. Replaces the old timer-based interval."
   :type '(choice (const :tag "Disabled" nil)
-                 integer)
+                 number)
   :group 'project-x)
 
 (defvar project-x-window-alist nil
   "Alist of window configurations associated with known projects.")
 
-(defvar project-x-save-timer nil
-  "Timer for auto-saving project state.")
+(defvar project-x--auto-save-timer nil
+  "Idle timer for debounced auto-saving.")
 
 (defun project-x--window-state-write (&optional file)
   "Write project window states to `project-x-window-list-file'.
@@ -109,8 +109,8 @@ If FILE is specified, read from it instead."
          (condition-case nil
              (if-let ((win-state-alist (read (current-buffer))))
                  (setq project-x-window-alist win-state-alist)
-               (message (format "Could not read %s" project-x-window-list-file)))
-           (error (message (format "Could not read %s" project-x-window-list-file)))))))
+               (message "Could not read %s" project-x-window-list-file))
+           (error (message "Could not read %s" project-x-window-list-file))))))
 
 ;; helper to normalize the path for a project consistently
 (defun project-x--project-root-key (dir)
@@ -163,6 +163,7 @@ If FILE is specified, read from it instead."
   "Return the label for the current project."
   (project-x--session-label (project-x--current-project-root-or-error)))
 
+;;;###autoload
 (defun project-x-rename-session (label)
   "Rename the current project's session to LABEL.
 This changes only the display name, not the project directory."
@@ -176,6 +177,7 @@ This changes only the display name, not the project directory."
     (project-x--window-state-write)
     (message "Renamed session for %s to %s" dir label)))
 
+;;;###autoload
 (defun project-x-clear-session (&optional arg)
   "Delete the saved session for the current project.
 With optional prefix argument ARG, query for a project instead."
@@ -193,6 +195,35 @@ With optional prefix argument ARG, query for a project instead."
           (message "Deleted session for %s" key))
       (message "No saved session for %s" key))))
 
+;; gets all buffer data for the project/session including non-file buffers
+(defun project-x--buffer-session-data (buf)
+  "Extract session data for BUF.
+Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignored."
+  (let ((name (buffer-name buf))
+        (mode (buffer-local-value 'major-mode buf))
+        (dir (buffer-local-value 'default-directory buf)))
+    (cond
+     ;; explicitly ignore special/ephemeral buffers
+     ((string-match-p "^\\*\\(scratch\\|Messages\\|Warnings\\|Compile-Log\\|Backtrace\\|Help\\|info\\|Customize\\|Occur\\|grep\\|Flymake\\)\\*$" name) nil)
+     ;; file buffers
+     ((buffer-file-name buf)
+      (cons name `(:type file :path ,(buffer-file-name buf))))
+     ;; dired
+     ((eq mode 'dired-mode)
+      (cons name `(:type dired :path ,(with-current-buffer buf dired-directory))))
+     ;; magit
+     ((and (eq mode 'magit-status-mode) (fboundp 'magit-status-mode))
+      (cons name `(:type magit :root ,dir)))
+     ;; eshell
+     ((eq mode 'eshell-mode)
+      (cons name `(:type eshell :dir ,dir)))
+     ;; compilation
+     ((eq mode 'compilation-mode)
+      (cons name `(:type compilation :dir ,dir)))
+     ;; skip everything else by default
+     (t nil))))
+
+;;;###autoload
 (defun project-x-window-state-save (&optional arg)
   "Save current window state of project.
 With optional prefix argument ARG, query for project."
@@ -202,24 +233,79 @@ With optional prefix argument ARG, query for project."
                           (project-root (project-current)))))
               (dir (project-x--project-root-key dir))
               (default-directory dir))
-    (unless project-x-window-alist (project-x--window-state-read))
-    (let ((file-list)
+    (project-x--ensure-window-state-loaded)
+    (let ((buffer-data nil)
           (label (project-x--session-label dir)))
-      ;; Collect file-list of all open project buffers
-      (dolist (buf (project-buffers (project-current)) file-list)
-        (if-let ((file-name (or (buffer-file-name buf)
-                                (with-current-buffer buf
-                                  (and (derived-mode-p 'dired-mode)
-                                       dired-directory)))))
-            ;; saves a cons cell of (file-path . buffer-name)
-            (push (cons file-name (buffer-name buf)) file-list)))
+      ;; collect session data for all open project buffers
+      (dolist (buf (project-buffers (project-current)))
+        (when-let ((data (project-x--buffer-session-data buf)))
+          (push data buffer-data)))
       (project-x--set-session-entry
        dir
        (list (cons 'label label)
-             (cons 'files file-list)
+             (cons 'buffers buffer-data)
              (cons 'windows (window-state-get nil t)))))
     (project-x--window-state-write) ;; save to disk
     (message (format "Saved project state for %s" dir))))
+
+;; not every buffer is a file, for buffers that don't have file paths
+;; (eshell-mode, magit-status-mode, compilation) they will need different init calls
+;; it does this by reading the :type metadata (file, dired, magit, eshell, compilation)
+;; Handles three formats for backwards compatibility:
+;;   1. New: (\"buf-name\" . (:type TYPE :data ...))
+;;   2. Old v1: (\"/path/to/file\" . \"buf-name\")
+;;   3. Legacy: \"/path/to/file\" (plain string)
+(defun project-x--restore-buffer (item)
+  "Create/return buffer from session ITEM.
+Returns (expected-name . buffer) or nil."
+  (cond
+   ;; format 3: plain string (legacy sessions)
+   ((stringp item)
+    (when (file-exists-p item)
+      (let ((name (file-name-nondirectory (directory-file-name item))))
+        (cons name (find-file-noselect item)))))
+   ;; format 1: New plist-based format (name . (:type ...))
+   ;; must come before format 2 because car is also a string
+   ((and (consp item) (listp (cdr item)))
+    (let* ((buf-name (car item))
+           (props (cdr item))
+           (type (plist-get props :type)))
+      (cond
+       ((eq type 'file)
+        (let ((path (plist-get props :path)))
+          (when (file-exists-p path)
+            (cons buf-name (find-file-noselect path)))))
+       ((eq type 'dired)
+        (let ((path (plist-get props :path)))
+          (when (file-exists-p path)
+            (cons buf-name (dired-noselect path)))))
+       ((eq type 'magit)
+        (let ((dir (plist-get props :root)))
+          (when (file-exists-p dir)
+            (cons buf-name (with-current-buffer (get-buffer-create buf-name)
+                             (setq default-directory dir)
+                             (when (fboundp 'magit-status-mode) (magit-status-mode))
+                             (current-buffer))))))
+       ((eq type 'eshell)
+        (let ((dir (plist-get props :dir)))
+          (cons buf-name (with-current-buffer (get-buffer-create buf-name)
+                           (setq default-directory dir)
+                           (unless (eq major-mode 'eshell-mode) (eshell-mode))
+                           (current-buffer)))))
+       ((eq type 'compilation)
+        (cons buf-name (with-current-buffer (get-buffer-create buf-name)
+                         (compilation-mode)
+                         (setq default-directory (plist-get props :dir))
+                         (insert ";; Compilation session restored.\n")
+                         (current-buffer))))
+       (t nil))))
+   ;; format 2: Cons cell with string car AND string cdr (old v1: path . name)
+   ((and (consp item) (stringp (car item)) (stringp (cdr item)))
+    (let ((path (car item))
+          (name (cdr item)))
+      (when (file-exists-p path)
+        (cons name (find-file-noselect path)))))
+   (t nil)))
 
 ;; actual restore session happens here, once confirmed
 ;; that a session does exist for the selected project
@@ -230,33 +316,15 @@ With optional prefix argument ARG, query for project."
 (defun project-x--window-state-restore (dir)
   "Restore the saved window state for project directory DIR.
 Return non-nil when a saved state was found."
-  (unless project-x-window-alist (project-x--window-state-read))
+  (project-x--ensure-window-state-loaded)
   (if-let* ((project-state (project-x--session-entry dir))
-            (window-config (alist-get 'windows project-state)))
-      (let* ((file-list (alist-get 'files project-state))
-             ;; open all project files and pair each with the what the
-             ;; buffer was called when the session was saved
-             ;; read the saved buffer name directly to respect `uniquify`
-             ;; fallback cleanly for older saved states without crashing on empty strings
-             (name-buf-pairs
-              (delq nil
-                    (mapcar (lambda (item)
-                              (let* ((is-old-format (stringp item))
-                                     (file-name (if is-old-format item (car item)))
-                                     (expected (if is-old-format
-                                                   (file-name-nondirectory (directory-file-name file-name))
-                                                 (cdr item))))
-                                (when (file-exists-p file-name)
-                                  (cons expected (find-file-noselect file-name)))))
-                            file-list)))
-             ;; track squatter buffers that already own a bare name so we
-             ;; can restore their names after window-state-put.
+            (window-config (alist-get 'windows project-state))
+            ;; Support both new 'buffers key and legacy 'files key
+            (buffer-items (or (alist-get 'buffers project-state)
+                              (alist-get 'files project-state))))
+      (let* ((name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
              (squatter-renames nil))
-        ;; for every project buffer that ended up with a uniquified name
-        ;; (like elline.el<2>) because a same-named buffer from another
-        ;; project was already open, temporarily:
-        ;;   1. Rename the squatter out of the way.
-        ;;   2. Give the project buffer the bare name window-state-put expects.
+        ;; Handle uniquify/squatter buffer collisions
         (dolist (pair name-buf-pairs)
           (let* ((expected (car pair))
                  (buf      (cdr pair)))
@@ -267,10 +335,8 @@ Return non-nil when a saved state was found."
                   (push (cons squatter (buffer-name squatter)) squatter-renames)
                   (with-current-buffer squatter (rename-buffer tmp))))
               (with-current-buffer buf (rename-buffer expected)))))
-        ;; restore the window configuration.  Buffer names now match the
-        ;; saved state, so every window will get the right buffer.
+        ;; restore the window configuration
         (window-state-put window-config nil 'safe)
-        
         ;; give squatter buffers their names back
         (dolist (pair squatter-renames)
           (when (buffer-live-p (car pair))
@@ -289,13 +355,14 @@ Used as the direct command executed by `project-switch-project'."
   (if-let* ((project (project-current nil))
             (dir (project-root project)))
       (if (project-x--window-state-restore dir)
-          (message (format "Restored project state for %s" dir))
-        (message (format "No saved window state for project %s" dir)))
+          (message "Restored project state for %s" dir)
+        (message "No saved window state for project %s" dir))
     (message "No current project")))
 
 ;; project-x-window-state-load -> project-switch-project -> project-x--restore-session
 ;; window-state-load routes to project-switch-project and
 ;; immediately restores session without prompting (avoids infinite recursion)
+;;;###autoload
 (defun project-x-window-state-load (dir)
   "Switch to DIR with `project-switch-project' and restore its saved session.
 If DIR is unspecified query the user for a project instead."
@@ -303,6 +370,7 @@ If DIR is unspecified query the user for a project instead."
   (let ((project-switch-commands 'project-x--restore-session-command))
     (project-switch-project dir)))
 
+;;;###autoload
 (defun project-x-windows ()
   "Restore the last saved window state of the current project."
   (interactive)
@@ -352,6 +420,7 @@ matching root as a `local' project."
       (cons 'local (car (sort roots (lambda (a b) (> (length a) (length b)))))))))
 
 ;; More reliably add local projects + root markers to project list in one go
+;;;###autoload
 (defun project-x-add-local-project (&optional dir)
   "Ensure DIR is recognized as a project and register it with `project.el'.
 Creates a marker file from `project-x-local-identifier' if missing.
@@ -381,8 +450,8 @@ simply re-register the project in memory."
 ;; -------------------------------------
 (defun project-x--dynamic-switch-commands (orig-fun dir &rest args)
   "Dynamically include 'Restore windows' to ARGS in ORIG-FUN if a saved state exists for DIR."
-  (unless project-x-window-alist (project-x--window-state-read))
-  (let* ((target-dir (file-name-as-directory (expand-file-name dir))) ;; normalize path
+  (project-x--ensure-window-state-loaded)
+  (let* ((target-dir (file-name-as-directory (expand-file-name dir)))
          (has-session (project-x--session-has-window-state-p target-dir))
          (cmd-entry '(project-x-windows "Restore windows" ?j))
          (project-switch-commands ;; dynamically bind the command list
@@ -398,6 +467,23 @@ simply re-register the project in memory."
     ;; execute project switch with the temporary environment
     (apply orig-fun dir args)))
 
+;; Debounced auto-save system
+;; -------------------------------------
+(defun project-x--schedule-auto-save ()
+  "Schedule a debounced auto-save of the current project state."
+  (when (and project-x-auto-save-delay project-x-mode (project-current nil))
+    (when project-x--auto-save-timer
+      (cancel-timer project-x--auto-save-timer))
+    (setq project-x--auto-save-timer
+          (run-with-idle-timer project-x-auto-save-delay nil
+                               #'project-x--auto-save-current))))
+
+(defun project-x--auto-save-current ()
+  "Auto-save the current project if it has open buffers."
+  (when-let ((proj (project-current nil))
+             (bufs (project-buffers proj)))
+    (when bufs
+      (project-x-window-state-save))))
 
 (defun project-x--project-prompt ()
   "Use `project-prompter' to inject custom prompt to `project-switch-project'."
@@ -413,6 +499,22 @@ simply re-register the project in memory."
     (cdr (assoc (completing-read "Switch to project: " choices nil t)
                 choices))))
 
+;; Sync with project-forget-project
+;; -------------------------------------
+(defun project-x--handle-forget-project (orig-fun project &rest args)
+  "Remove session data when PROJECT is forgotten.
+PROJECT can be either a project object or a directory string."
+  (let* ((dir (if (stringp project)
+                  project
+                (project-root project)))
+         (key (project-x--project-root-key dir)))
+    (project-x--ensure-window-state-loaded)
+    (when (assoc key project-x-window-alist #'equal)
+      (setq project-x-window-alist
+            (cl-remove key project-x-window-alist :key #'car :test #'equal))
+      (project-x--window-state-write))
+    (apply orig-fun project args)))
+
 ;;;###autoload
 (define-minor-mode project-x-mode
   "Minor mode to enable extra convenience features for project.el.
@@ -427,22 +529,28 @@ contains) a special file as a project."
       (progn
         (add-hook 'project-find-functions 'project-x-try-local 90)
         (add-hook 'kill-emacs-hook 'project-x--window-state-write)
+        ;; Debounced auto-save hooks
+        (add-hook 'window-configuration-change-hook #'project-x--schedule-auto-save)
+        (add-hook 'kill-buffer-hook #'project-x--schedule-auto-save)
         (project-x--window-state-read)
-        (define-key project-prefix-map (kbd "w") #'project-x-window-state-save)
-        (define-key project-prefix-map (kbd "j") #'project-x-window-state-load)
-        (define-key project-prefix-map (kbd "a") #'project-x-add-local-project)
-        (define-key project-prefix-map (kbd "r") #'project-x-rename-session)
-        (define-key project-prefix-map (kbd "d") #'project-x-clear-session)
+        ;; Keybindings (safe registration)
+        (unless (lookup-key project-prefix-map (kbd "w"))
+          (define-key project-prefix-map (kbd "w") #'project-x-window-state-save))
+        (unless (lookup-key project-prefix-map (kbd "j"))
+          (define-key project-prefix-map (kbd "j") #'project-x-window-state-load))
+        (unless (lookup-key project-prefix-map (kbd "a"))
+          (define-key project-prefix-map (kbd "a") #'project-x-add-local-project))
+        (unless (lookup-key project-prefix-map (kbd "r"))
+          (define-key project-prefix-map (kbd "r") #'project-x-rename-session))
+        (unless (lookup-key project-prefix-map (kbd "d"))
+          (define-key project-prefix-map (kbd "d") #'project-x-clear-session))
         (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
-
-        (when project-x-save-interval
-          (setq project-x-save-timer
-                (run-with-timer 0 (max project-x-save-interval 5)
-                                #'project-x-window-state-save))))
-
-    ;; Turning the mode OFF
+        (advice-add 'project-forget-project :around #'project-x--handle-forget-project))
+    ;; Turning mode OFF
     (remove-hook 'project-find-functions #'project-x-try-local)
     (remove-hook 'kill-emacs-hook #'project-x--window-state-write)
+    (remove-hook 'window-configuration-change-hook #'project-x--schedule-auto-save)
+    (remove-hook 'kill-buffer-hook #'project-x--schedule-auto-save)
     (define-key project-prefix-map (kbd "w") nil)
     (define-key project-prefix-map (kbd "j") nil)
     (define-key project-prefix-map (kbd "a") nil)
@@ -450,9 +558,9 @@ contains) a special file as a project."
     (define-key project-prefix-map (kbd "d") nil)
     ;; remove dynamic menu advice
     (advice-remove 'project-switch-project #'project-x--dynamic-switch-commands)
-
-    (when (timerp project-x-save-timer)
-      (cancel-timer project-x-save-timer))))
+    (advice-remove 'project-forget-project #'project-x--handle-forget-project)
+    (when (timerp project-x--auto-save-timer)
+      (cancel-timer project-x--auto-save-timer))))
 
 (provide 'project-x)
 ;;; project-x.el ends here
