@@ -6,7 +6,7 @@
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
 ;; Maintainer: vmargb <https://github.com/vmargb>
 ;; URL: https://github.com/vmargb/project-x
-;; Version: 0.2.3
+;; Version: 0.2.4
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: project, convenience, session, tools
 
@@ -279,21 +279,23 @@ Returns (expected-name . buffer) or nil."
         (let ((path (plist-get props :path)))
           (when (file-exists-p path)
             (cons buf-name (dired-noselect path)))))
+
+       ;; `generate-new-buffer' optimisation over `get-buffer-create'
        ((eq type 'magit)
         (let ((dir (plist-get props :root)))
           (when (file-exists-p dir)
-            (cons buf-name (with-current-buffer (get-buffer-create buf-name)
+            (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
                              (setq default-directory dir)
                              (when (fboundp 'magit-status-mode) (magit-status-mode))
                              (current-buffer))))))
        ((eq type 'eshell)
         (let ((dir (plist-get props :dir)))
-          (cons buf-name (with-current-buffer (get-buffer-create buf-name)
+          (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
                            (setq default-directory dir)
                            (unless (eq major-mode 'eshell-mode) (eshell-mode))
                            (current-buffer)))))
        ((eq type 'compilation)
-        (cons buf-name (with-current-buffer (get-buffer-create buf-name)
+        (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
                          (compilation-mode)
                          (setq default-directory (plist-get props :dir))
                          (insert ";; Compilation session restored.\n")
@@ -322,8 +324,14 @@ Return non-nil when a saved state was found."
             ;; Support both new 'buffers key and legacy 'files key
             (buffer-items (or (alist-get 'buffers project-state)
                               (alist-get 'files project-state))))
-      (let* ((name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
+      
+      ;; prevent GC pauses and UI thrashing for large projects
+      (let* ((gc-cons-threshold (max gc-cons-threshold (* 50 1024 1024)))
+             (inhibit-redisplay t)
+             (inhibit-message t)
+             (name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
              (squatter-renames nil))
+        
         ;; Handle uniquify/squatter buffer collisions
         (dolist (pair name-buf-pairs)
           (let* ((expected (car pair))
@@ -333,11 +341,19 @@ Return non-nil when a saved state was found."
                 (let ((tmp (generate-new-buffer-name
                             (concat " *px-tmp-" expected "*"))))
                   (push (cons squatter (buffer-name squatter)) squatter-renames)
-                  (with-current-buffer squatter (rename-buffer tmp))))
-              (with-current-buffer buf (rename-buffer expected)))))
+                  (with-current-buffer squatter
+                    ;; disable uniquify strictly during the temporary swap
+                    (let ((uniquify-buffer-name-style nil))
+                      (rename-buffer tmp)))))
+              (with-current-buffer buf
+                (let ((uniquify-buffer-name-style nil))
+                  (rename-buffer expected))))))
+        
         ;; restore the window configuration
         (window-state-put window-config nil 'safe)
-        ;; give squatter buffers their names back
+        
+        ;; give squatter buffers their names back safely
+        ;; uniquify is active here to safely handle any final collisions
         (dolist (pair squatter-renames)
           (when (buffer-live-p (car pair))
             (with-current-buffer (car pair)
