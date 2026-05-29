@@ -76,9 +76,15 @@
 
 (defcustom project-x-auto-save-delay nil
   "Seconds of idle time before auto-saving project state.
-Set to nil to disable auto-save. Replaces the old timer-based interval."
+Set to nil to disable auto-save.  Replaces the old timer-based interval."
   :type '(choice (const :tag "Disabled" nil)
                  number)
+  :group 'project-x)
+
+(defcustom project-x-save-extra-buffers nil
+  "Whether to save and restore non-file buffers (Magit, Eshell, Compilation).
+If changed to nil, existing saved extra buffers are ignored during restoration."
+  :type 'boolean
   :group 'project-x)
 
 (defvar project-x-window-alist nil
@@ -196,6 +202,7 @@ With optional prefix argument ARG, query for a project instead."
       (message "No saved session for %s" key))))
 
 ;; gets all buffer data for the project/session including non-file buffers
+;; extra buffers are now properly guarded behind `project-x-save-extra-buffers'
 (defun project-x--buffer-session-data (buf)
   "Extract session data for BUF.
 Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignored."
@@ -212,13 +219,16 @@ Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignore
      ((eq mode 'dired-mode)
       (cons name `(:type dired :path ,(with-current-buffer buf dired-directory))))
      ;; magit
-     ((and (eq mode 'magit-status-mode) (fboundp 'magit-status-mode))
+     ((and project-x-save-extra-buffers
+           (eq mode 'magit-status-mode) (fboundp 'magit-status-mode))
       (cons name `(:type magit :root ,dir)))
      ;; eshell
-     ((eq mode 'eshell-mode)
+     ((and project-x-save-extra-buffers
+           (eq mode 'eshell-mode))
       (cons name `(:type eshell :dir ,dir)))
      ;; compilation
-     ((eq mode 'compilation-mode)
+     ((and project-x-save-extra-buffers
+           (eq mode 'compilation-mode))
       (cons name `(:type compilation :dir ,dir)))
      ;; skip everything else by default
      (t nil))))
@@ -279,27 +289,30 @@ Returns (expected-name . buffer) or nil."
         (let ((path (plist-get props :path)))
           (when (file-exists-p path)
             (cons buf-name (dired-noselect path)))))
-
        ;; `generate-new-buffer' optimisation over `get-buffer-create'
+       ;; now also properly guarded by `project-x-save-extra-buffers'
        ((eq type 'magit)
-        (let ((dir (plist-get props :root)))
-          (when (file-exists-p dir)
+        (when (and project-x-save-extra-buffers
+                   (let ((dir (plist-get props :root)))
+                     (file-exists-p dir)))
+          (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
+                           (setq default-directory (plist-get props :root))
+                           (when (fboundp 'magit-status-mode) (magit-status-mode))
+                           (current-buffer)))))
+       ((eq type 'eshell)
+        (when project-x-save-extra-buffers
+          (let ((dir (plist-get props :dir)))
             (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
                              (setq default-directory dir)
-                             (when (fboundp 'magit-status-mode) (magit-status-mode))
+                             (unless (eq major-mode 'eshell-mode) (eshell-mode))
                              (current-buffer))))))
-       ((eq type 'eshell)
-        (let ((dir (plist-get props :dir)))
-          (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
-                           (setq default-directory dir)
-                           (unless (eq major-mode 'eshell-mode) (eshell-mode))
-                           (current-buffer)))))
        ((eq type 'compilation)
-        (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
-                         (compilation-mode)
-                         (setq default-directory (plist-get props :dir))
-                         (insert ";; Compilation session restored.\n")
-                         (current-buffer))))
+        (when project-x-save-extra-buffers
+          (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
+                           (compilation-mode)
+                           (setq default-directory (plist-get props :dir))
+                           (insert ";; Compilation session restored.\n")
+                           (current-buffer)))))
        (t nil))))
    ;; format 2: Cons cell with string car AND string cdr (old v1: path . name)
    ((and (consp item) (stringp (car item)) (stringp (cdr item)))
@@ -324,14 +337,14 @@ Return non-nil when a saved state was found."
             ;; Support both new 'buffers key and legacy 'files key
             (buffer-items (or (alist-get 'buffers project-state)
                               (alist-get 'files project-state))))
-      
+
       ;; prevent GC pauses and UI thrashing for large projects
       (let* ((gc-cons-threshold (max gc-cons-threshold (* 50 1024 1024)))
              (inhibit-redisplay t)
              (inhibit-message t)
              (name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
              (squatter-renames nil))
-        
+
         ;; Handle uniquify/squatter buffer collisions
         (dolist (pair name-buf-pairs)
           (let* ((expected (car pair))
@@ -348,10 +361,10 @@ Return non-nil when a saved state was found."
               (with-current-buffer buf
                 (let ((uniquify-buffer-name-style nil))
                   (rename-buffer expected))))))
-        
+
         ;; restore the window configuration
         (window-state-put window-config nil 'safe)
-        
+
         ;; give squatter buffers their names back safely
         ;; uniquify is active here to safely handle any final collisions
         (dolist (pair squatter-renames)
