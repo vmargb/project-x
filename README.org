@@ -11,7 +11,7 @@ Project-x collapses that split: every project is treated as a session, and resto
 
 So:
 - =project-switch-project= now switches sessions too
-- =project-kill-buffers= closes the project and the session, optionally saving the session state right where you left off
+- =project-kill-buffers= closes the project & the session, optionally saving the session state right where you left off
 - =project-forget-project= now automatically clears session data on top of removing the project
 
 *Note:* If you pair this up with Emacs 27's =tab-bar-mode= or something like [[https://github.com/abougouffa/one-tab-per-project][one-tab-per-project]], you can *quick-switch* between your already opened sessions using =tab-bar-switch-to-tab= (once again, no new commands). Perhaps this process will be automated in a future update of project-x.
@@ -60,7 +60,7 @@ If you prefer not to use the opinionated =project-x-mode=, you can selectively e
 #+end_src
 
 *** Customization Options
-There are three main customization options right now:
+There are four main customization options right now:
 - =project-x-window-list-file=: File to store project window configurations. Defaults to your emacs user directory.
 - =project-x-local-identifier=: String matched against file names to decide if a directory (or some parent thereof) is a project. Defaults to =.project=. You can also supply a list of strings.
   For example, Node projects use =package.json=, Elixir uses =mix.exs=, and Julia uses =Project.toml=. You can identify all of these as project roots by setting:
@@ -68,6 +68,7 @@ There are three main customization options right now:
     (setq project-x-local-identifier '("package.json" "mix.exs" "Project.toml" ".project"))
   #+END_SRC
 - =project-x-auto-save-delay=: Number of seconds of idle time before auto-saving the current project window configuration. Defaults to =nil= (autosave disabled). This requires =project-x-mode= to be turned on. The save is debounced: Emacs must be idle for this many seconds after a window or buffer change before the state is written.
+- =project-x-save-extra-buffers=: Boolean to control whether special non-file buffers (=magit-status=, =eshell=, =compilation=) are tracked. Defaults to =nil=. If toggled to =t=, these buffers will not be skipped during save/restore. If switched back to =nil=, existing extra buffers found in saved states will be safely ignored upon restoration.
 
 ** Usage
 
@@ -104,7 +105,7 @@ All =project.el= features should work as expected (Now works with =project-vc-ex
 :ID:       c1326cad-5dd9-4789-8e5e-74f5b012b546
 :END:
 - This is currently limited to storing only the current frame configuration.
-- The only state saved is your project files, =dired= buffers, =magit-status= buffers, =eshell= buffers, =compilation= buffers, and the current frame configuration. No minor modes, registers, or other special buffers (help buffers, scratch, etc.) are recorded. For complete recall, look into the built-in Desktop library.
+- The only state saved is your project files, =dired= buffers, and (if enabled via =project-x-save-extra-buffers=) =magit-status=, =eshell=, and =compilation= buffers. No minor modes, registers, or other special buffers (help buffers, scratch, etc.) are recorded. For complete recall, look into the built-in Desktop library.
 - If you use multiple Emacs instances, the project states saved to disk can get overwritten.
 - This doesn't handle returning to previous state after closing a project. This can be solved either with =winner-undo= or a =tab-bar-mode= based package like =Tabspaces= / =otpp.el=.
 
@@ -148,6 +149,7 @@ Since this library uses the built-in Emacs API to store the state, it is very co
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slowdown, please raise an issue.
 
 ** Changelog
+- /New in v0.2.4:/ Added the custom toggle option =project-x-save-extra-buffers= to let users opt-out of saving or restoring special buffers (=magit=, =eshell=, =compilation=). Also added general optimisations for window restoration.
 - /New in v0.2.3:/ Replaced fixed-interval autosave with a debounced idle-timer (=project-x-auto-save-delay=). Added support for saving and restoring =magit-status=, =eshell=, and =compilation= buffers alongside regular file and =dired= buffers. =project-forget-project= now automatically removes session data.
 - /New in v0.2.2:/ Fixed *major* bug where Emacs's =uniquify= prevents =project-switch-project= from correctly restoring sessions. Fixed identical directory and buffer name causing race conditions.
 - /New in v0.2.1:/ =project-prompter= for cleaner format & =project-x-rename-session= to rename a session.
