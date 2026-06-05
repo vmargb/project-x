@@ -6,7 +6,7 @@
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
 ;; Maintainer: vmargb <https://github.com/vmargb>
 ;; URL: https://github.com/vmargb/project-x
-;; Version: 0.2.4
+;; Version: 0.2.5
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: project, convenience, session, tools
 
@@ -330,11 +330,13 @@ Returns (expected-name . buffer) or nil."
 ;; switch from happening. I call these files "squatter buffers"
 (defun project-x--window-state-restore (dir)
   "Restore the saved window state for project directory DIR.
-Return non-nil when a saved state was found."
+Returns either `restored' on success, `stale' when a session exists but none
+of its buffers could be restored (all files have been deleted),
+or nil when no session was found at all."
   (project-x--ensure-window-state-loaded)
   (if-let* ((project-state (project-x--session-entry dir))
             (window-config (alist-get 'windows project-state))
-            ;; Support both new 'buffers key and legacy 'files key
+            ;; support both new 'buffers key and legacy 'files key
             (buffer-items (or (alist-get 'buffers project-state)
                               (alist-get 'files project-state))))
 
@@ -345,33 +347,39 @@ Return non-nil when a saved state was found."
              (name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
              (squatter-renames nil))
 
-        ;; Handle uniquify/squatter buffer collisions
-        (dolist (pair name-buf-pairs)
-          (let* ((expected (car pair))
-                 (buf      (cdr pair)))
-            (unless (string= (buffer-name buf) expected)
-              (when-let ((squatter (get-buffer expected)))
-                (let ((tmp (generate-new-buffer-name
-                            (concat " *px-tmp-" expected "*"))))
-                  (push (cons squatter (buffer-name squatter)) squatter-renames)
-                  (with-current-buffer squatter
-                    ;; disable uniquify strictly during the temporary swap
-                    (let ((uniquify-buffer-name-style nil))
-                      (rename-buffer tmp)))))
-              (with-current-buffer buf
-                (let ((uniquify-buffer-name-style nil))
-                  (rename-buffer expected))))))
+        ;; if every saved buffer failed to restore (files deleted, remote gone,
+        ;; extra-buffers turned off, etc.) report stale rather than applying a
+        ;; window config that references no live buffers, which would silently
+        ;; leave the user on whatever they had open before
+        (if (null name-buf-pairs)
+            'stale
+          ;; handle uniquify/squatter buffer collisions
+          (dolist (pair name-buf-pairs)
+            (let* ((expected (car pair))
+                   (buf      (cdr pair)))
+              (unless (string= (buffer-name buf) expected)
+                (when-let ((squatter (get-buffer expected)))
+                  (let ((tmp (generate-new-buffer-name
+                              (concat " *px-tmp-" expected "*"))))
+                    (push (cons squatter (buffer-name squatter)) squatter-renames)
+                    (with-current-buffer squatter
+                      ;; disable uniquify strictly during the temporary swap
+                      (let ((uniquify-buffer-name-style nil))
+                        (rename-buffer tmp)))))
+                (with-current-buffer buf
+                  (let ((uniquify-buffer-name-style nil))
+                    (rename-buffer expected))))))
 
-        ;; restore the window configuration
-        (window-state-put window-config nil 'safe)
+          ;; restore the window configuration
+          (window-state-put window-config nil 'safe)
 
-        ;; give squatter buffers their names back safely
-        ;; uniquify is active here to safely handle any final collisions
-        (dolist (pair squatter-renames)
-          (when (buffer-live-p (car pair))
-            (with-current-buffer (car pair)
-              (rename-buffer (cdr pair) t))))
-        t)
+          ;; give squatter buffers their names back safely
+          ;; uniquify is active here to safely handle any final collisions
+          (dolist (pair squatter-renames)
+            (when (buffer-live-p (car pair))
+              (with-current-buffer (car pair)
+                (rename-buffer (cdr pair) t))))
+          'restored))
     nil))
 
 ;; midway helper that routes both project-switch-project
@@ -379,13 +387,18 @@ Return non-nil when a saved state was found."
 ;; only if a session for the current project exists
 (defun project-x--restore-session-command ()
   "Restore the saved window state for the current project.
-Used as the direct command executed by `project-switch-project'."
+Used as the direct command executed by `project-switch-project'.
+Falls back to Dired at the project root when no session exists or
+when all session files have been deleted."
   (interactive)
   (if-let* ((project (project-current nil))
             (dir (project-root project)))
-      (if (project-x--window-state-restore dir)
-          (message "Restored project state for %s" dir)
-        (message "No saved window state for project %s" dir))
+      (pcase (project-x--window-state-restore dir)
+        ('restored (message "Restored project state for %s" dir))
+        ('stale    (dired dir)
+                   (message "Session files no longer exist, opened project root in Dired instead."))
+        (_         (dired dir)
+                   (message "No saved session for this project, opened project root in Dired instead.")))
     (message "No current project")))
 
 ;; project-x-window-state-load -> project-switch-project -> project-x--restore-session
@@ -401,13 +414,18 @@ If DIR is unspecified query the user for a project instead."
 
 ;;;###autoload
 (defun project-x-windows ()
-  "Restore the last saved window state of the current project."
+  "Restore the last saved window state of the current project.
+Falls back to Dired at the project root when no session exists or
+when all session files have been deleted."
   (interactive)
   (if-let* ((project (project-current nil))
             (dir (project-root project)))
-      (if (project-x--window-state-restore dir) ;; restore if in project
-          (message (format "Restored project state for %s" dir))
-        (message (format "No saved window state for project %s" dir)))
+      (pcase (project-x--window-state-restore dir)
+        ('restored (message "Restored project state for %s" dir))
+        ('stale    (dired dir)
+                   (message "Session files no longer exist, opened project root in Dired instead."))
+        (_         (dired dir)
+                   (message "No saved session for this project, opened project root in Dired instead.")))
     (message "No current project")))
 
 ;; Recognize directories as projects by defining a new project backend `local'
