@@ -514,10 +514,22 @@ simply re-register the project in memory."
     (when bufs
       (project-x-window-state-save))))
 
+;; updated:
+;; `project--find-in-directory' would run over every root without protection
+;; one bad root would abort the whole prompt. now each directory is tried
+;; independently, and any error is dropped from the candidate list
+;; so something like an unreachable host no longer breaks
 (defun project-x--project-prompt ()
-  "Use `project-prompter' to inject custom prompt to `project-switch-project'."
+  "Use `project-prompter' to inject custom prompt to `project-switch-project'.
+Silently skips projects where the directory cannot be resolved like TRAMP"
   (let* ((dirs (project-known-project-roots))
-         (projects (delq nil (mapcar #'project--find-in-directory dirs)))
+         (projects (delq nil ; remove failed directories from the project list
+                         (mapcar (lambda (dir)
+                                   ; catch all folders that cannot be resolved
+                                   (condition-case nil
+                                       (project--find-in-directory dir)
+                                     (error nil)))
+                                 dirs)))
          (choices
           (mapcar
            (lambda (proj)
