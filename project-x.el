@@ -6,7 +6,7 @@
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
 ;; Maintainer: vmargb <https://github.com/vmargb>
 ;; URL: https://github.com/vmargb/project-x
-;; Version: 0.2.5
+;; Version: 0.3.0
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: project, convenience, session, tools
 
@@ -29,7 +29,9 @@
 ;;
 ;; project-x provides some convenience features for project.el:
 ;; - Recognize any directory with a `.project' file as a project.
-;; - Save and restore project files and window configurations across sessions
+;; - Save and restore project files and window configurations across sessions.
+;; - (Optional) `project-x-tabs-mode', with unique tab
+;;   names that stay in sync with renamed sessions.
 ;;
 ;; COMMANDS:
 ;;
@@ -38,16 +40,24 @@
 ;; project-x-add-local-project : Conveniently add project + root marker to any dir
 ;; project-x-rename-session    : Rename the current project's display label
 ;;
-;; CUSTOMIZATION:
+;; TAB COMMANDS (project-x-tabs-mode, requires Emacs 28+):
+;; project-x-detach-buffer-to-tab  : Move the current buffer to its project's tab
+;; project-x-change-tab-root-dir   : Manually attach the current tab to a project
 ;;
+;; CUSTOMIZATION:
 ;; `project-x-window-list-file': File to store project window configurations
 ;; `project-x-local-identifier': String matched against file names to decide if a
 ;; directory is a project
 ;; `project-x-save-interval': Interval in seconds between autosaves of the
 ;; current project.
 ;;
-;; As of 15/04/2026, this package is maintained by vmargb.
-;; Original author: Karthik Chikmagalur.
+;; TAB CUSTOMIZATION:
+;; `project-x-tab-name-format'           : Format for disambiguating conflicting tab names
+;; `project-x-default-tab-name'          : Name of the initial/fallback tab
+;; `project-x-tab-bury-buffer'           : Bury instead of kill when buffer is in another tab
+;; `project-x-tab-kill-buffers-on-close' : Kill project buffers when tab is closed
+;; `project-x-tab-find-file-integration' : Auto-switch to a file's project tab on find-file
+;; `project-x-tab-override-commands'     : Commands always run in the tab's root directory
 
 ;;; Code:
 
@@ -93,6 +103,9 @@ If changed to nil, existing saved extra buffers are ignored during restoration."
 (defvar project-x--auto-save-timer nil
   "Idle timer for debounced auto-saving.")
 
+;; I/O
+;; ===============
+
 (defun project-x--window-state-write (&optional file)
   "Write project window states to `project-x-window-list-file'.
 If FILE is specified, write to it instead."
@@ -108,8 +121,7 @@ If FILE is specified, write to it instead."
 (defun project-x--window-state-read (&optional file)
   "Read project window states from `project-x-window-list-file'.
 If FILE is specified, read from it instead."
-  (and (or file
-           (file-exists-p project-x-window-list-file))
+  (and (or file (file-exists-p project-x-window-list-file))
        (with-temp-buffer
          (insert-file-contents (or file project-x-window-list-file))
          (condition-case nil
@@ -169,10 +181,14 @@ If FILE is specified, read from it instead."
   "Return the label for the current project."
   (project-x--session-label (project-x--current-project-root-or-error)))
 
+;; Commands
+;; ==================
+
 ;;;###autoload
 (defun project-x-rename-session (label)
   "Rename the current project's session to LABEL.
-This changes only the display name, not the project directory."
+This changes only the display name, not the project directory.
+When `project-x-tabs-mode' is active, the corresponding tab is also renamed."
   (interactive
    (list (read-string "Session label: "
                       (project-x--current-session-label))))
@@ -181,6 +197,11 @@ This changes only the display name, not the project directory."
     (setf (alist-get 'label entry) label)
     (project-x--set-session-entry dir entry)
     (project-x--window-state-write)
+    ;; sync the tab name when tabs mode is active
+    ;; forward-referenced via fboundp so Section 1 does not depend on Section 2
+    (when (and (bound-and-true-p project-x-tabs-mode)
+               (fboundp 'project-x--tab-sync-label))
+      (project-x--tab-sync-label dir label))
     (message "Renamed session for %s to %s" dir label)))
 
 ;;;###autoload
@@ -208,7 +229,7 @@ With optional prefix argument ARG, query for a project instead."
 Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignored."
   (let ((name (buffer-name buf))
         (mode (buffer-local-value 'major-mode buf))
-        (dir (buffer-local-value 'default-directory buf)))
+        (dir  (buffer-local-value 'default-directory buf)))
     (cond
      ;; explicitly ignore special/ephemeral buffers
      ((string-match-p "^\\*\\(scratch\\|Messages\\|Warnings\\|Compile-Log\\|Backtrace\\|Help\\|info\\|Customize\\|Occur\\|grep\\|Flymake\\)\\*$" name) nil)
@@ -223,12 +244,10 @@ Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignore
            (eq mode 'magit-status-mode) (fboundp 'magit-status-mode))
       (cons name `(:type magit :root ,dir)))
      ;; eshell
-     ((and project-x-save-extra-buffers
-           (eq mode 'eshell-mode))
+     ((and project-x-save-extra-buffers (eq mode 'eshell-mode))
       (cons name `(:type eshell :dir ,dir)))
      ;; compilation
-     ((and project-x-save-extra-buffers
-           (eq mode 'compilation-mode))
+     ((and project-x-save-extra-buffers (eq mode 'compilation-mode))
       (cons name `(:type compilation :dir ,dir)))
      ;; skip everything else by default
      (t nil))))
@@ -236,13 +255,22 @@ Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignore
 ;;;###autoload
 (defun project-x-window-state-save (&optional arg)
   "Save current window state of project.
-With optional prefix argument ARG, query for project."
+With optional prefix argument ARG, query for a project.
+When `project-x-tabs-mode' is active, saves the tab's bound project
+rather than the visited buffers project."
   (interactive "P")
-  (when-let* ((dir (cond (arg (project-prompt-project-dir))
-                         ((project-current)
-                          (project-root (project-current)))))
-              (dir (project-x--project-root-key dir))
-              (default-directory dir))
+  (when-let*
+      ((dir (cond
+             (arg (project-prompt-project-dir))
+             ;; when tabs mode is on, prefer the tabs project root so that
+             ;; visiting a foreign file does not save to the wrong project
+             ((and (bound-and-true-p project-x-tabs-mode)
+                   (fboundp 'project-x--tab-get-root)
+                   (project-x--tab-get-root)))
+             ((project-current)
+              (project-root (project-current)))))
+       (dir (project-x--project-root-key dir))
+       (default-directory dir))
     (project-x--ensure-window-state-loaded)
     (let ((buffer-data nil)
           (label (project-x--session-label dir)))
@@ -293,31 +321,31 @@ Returns (expected-name . buffer) or nil."
        ;; now also properly guarded by `project-x-save-extra-buffers'
        ((eq type 'magit)
         (when (and project-x-save-extra-buffers
-                   (let ((dir (plist-get props :root)))
-                     (file-exists-p dir)))
-          (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
-                           (setq default-directory (plist-get props :root))
-                           (when (fboundp 'magit-status-mode) (magit-status-mode))
-                           (current-buffer)))))
+                   (file-exists-p (plist-get props :root)))
+          (cons buf-name
+                (with-current-buffer (generate-new-buffer buf-name)
+                  (setq default-directory (plist-get props :root))
+                  (when (fboundp 'magit-status-mode) (magit-status-mode))
+                  (current-buffer)))))
        ((eq type 'eshell)
         (when project-x-save-extra-buffers
-          (let ((dir (plist-get props :dir)))
-            (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
-                             (setq default-directory dir)
-                             (unless (eq major-mode 'eshell-mode) (eshell-mode))
-                             (current-buffer))))))
+          (cons buf-name
+                (with-current-buffer (generate-new-buffer buf-name)
+                  (setq default-directory (plist-get props :dir))
+                  (unless (eq major-mode 'eshell-mode) (eshell-mode))
+                  (current-buffer)))))
        ((eq type 'compilation)
         (when project-x-save-extra-buffers
-          (cons buf-name (with-current-buffer (generate-new-buffer buf-name)
-                           (compilation-mode)
-                           (setq default-directory (plist-get props :dir))
-                           (insert ";; Compilation session restored.\n")
-                           (current-buffer)))))
+          (cons buf-name
+                (with-current-buffer (generate-new-buffer buf-name)
+                  (compilation-mode)
+                  (setq default-directory (plist-get props :dir))
+                  (insert ";; Compilation session restored.\n")
+                  (current-buffer)))))
        (t nil))))
    ;; format 2: Cons cell with string car AND string cdr (old v1: path . name)
    ((and (consp item) (stringp (car item)) (stringp (cdr item)))
-    (let ((path (car item))
-          (name (cdr item)))
+    (let ((path (car item)) (name (cdr item)))
       (when (file-exists-p path)
         (cons name (find-file-noselect path)))))
    (t nil)))
@@ -330,9 +358,8 @@ Returns (expected-name . buffer) or nil."
 ;; switch from happening. I call these files "squatter buffers"
 (defun project-x--window-state-restore (dir)
   "Restore the saved window state for project directory DIR.
-Returns either `restored' on success, `stale' when a session exists but none
-of its buffers could be restored (all files have been deleted),
-or nil when no session was found at all."
+Returns `restored' on success, `stale' when session buffers are all gone,
+or nil when no session was found."
   (project-x--ensure-window-state-loaded)
   (if-let* ((project-state (project-x--session-entry dir))
             (window-config (alist-get 'windows project-state))
@@ -346,7 +373,6 @@ or nil when no session was found at all."
              (inhibit-message t)
              (name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
              (squatter-renames nil))
-
         ;; if every saved buffer failed to restore (files deleted, remote gone,
         ;; extra-buffers turned off, etc.) report stale rather than applying a
         ;; window config that references no live buffers, which would silently
@@ -355,8 +381,8 @@ or nil when no session was found at all."
             'stale
           ;; handle uniquify/squatter buffer collisions
           (dolist (pair name-buf-pairs)
-            (let* ((expected (car pair))
-                   (buf      (cdr pair)))
+            (let ((expected (car pair))
+                  (buf      (cdr pair)))
               (unless (string= (buffer-name buf) expected)
                 (when-let ((squatter (get-buffer expected)))
                   (let ((tmp (generate-new-buffer-name
@@ -406,17 +432,31 @@ when all session files have been deleted."
 ;; immediately restores session without prompting (avoids infinite recursion)
 ;;;###autoload
 (defun project-x-window-state-load (dir)
-  "Switch to DIR with `project-switch-project' and restore its saved session.
-If DIR is unspecified query the user for a project instead."
+  "Switch to DIR and restore its saved session.
+When `project-x-tabs-mode' is active, creates or selects the projects
+dedicated tab before restoring, so the session lands in the right tab."
   (interactive (list (funcall project-prompter)))
-  (let ((project-switch-commands 'project-x--restore-session-command))
-    (project-switch-project dir)))
+  (if (and (bound-and-true-p project-x-tabs-mode)
+           (fboundp 'project-x--tab-select-or-create)
+           (require 'tab-bar nil t))
+      ;; directly handle tab + restore, bypassing `project-switch-project'
+      ;; so it always restores even when switching to an already-open tab
+      (let ((dir (expand-file-name dir)))
+        (project-x--tab-select-or-create dir)
+        (pcase (project-x--window-state-restore dir)
+          ('restored (message "Restored project state for %s" dir))
+          ('stale    (dired dir)
+                     (message "Session files no longer exist, opened project root in Dired."))
+          (_         (dired dir)
+                     (message "No saved session, opened project root in Dired."))))
+    ;; no tabs mode: original behaviour with project-switch-project
+    (let ((project-switch-commands 'project-x--restore-session-command))
+      (project-switch-project dir))))
 
 ;;;###autoload
 (defun project-x-windows ()
   "Restore the last saved window state of the current project.
-Falls back to Dired at the project root when no session exists or
-when all session files have been deleted."
+Falls back to Dired at the project root when no session exists."
   (interactive)
   (if-let* ((project (project-current nil))
             (dir (project-root project)))
@@ -428,8 +468,493 @@ when all session files have been deleted."
                    (message "No saved session for this project, opened project root in Dired instead.")))
     (message "No current project")))
 
-;; Recognize directories as projects by defining a new project backend `local'
-;; -------------------------------------
+
+;; Tab for each project integration (requires Emacs 28+, tab-bar-mode)
+;; =========================================================================
+;;
+;; each project is given a tab, with context isolation built in.
+;; all commands in `project-x-tab-override-commands' are run in the current
+;; tabs root directory automatically ti preserve context
+;; tab names are derived from session labels `project-x-rename-session'
+;; so renaming a session automatically syncs with the tab name
+;; the unique naming engine (adapted from otpp, credit: Abdelhak Bougouffa) resolves
+;; tab name conflicts between projects with identical names by appending the minimal
+;; distinguishing path component, such as "backend[project1]" vs "backend[project2]"
+
+(defgroup project-x-tabs nil
+  "Tab-per-project integration for project-x."
+  :group 'project-x)
+
+;; Customisation
+;; =======================
+
+(defcustom project-x-tab-name-format "%s[%s]"
+  "Format for disambiguating tab names that have the same base name.
+The first %s is the base (session label), the second %s is the
+distinguishing path suffix."
+  :type 'string
+  :group 'project-x-tabs)
+
+(defcustom project-x-default-tab-name "*default*"
+  "Name for the initial/fallback tab when no project is active.
+Can also be a no-argument function that returns the name."
+  :type '(choice string function)
+  :group 'project-x-tabs)
+
+(defcustom project-x-rename-initial-tab t
+  "When non-nil, rename the single initial tab to `project-x-default-tab-name'."
+  :type 'boolean
+  :group 'project-x-tabs)
+
+(defcustom project-x-tab-bury-buffer t
+  "Bury a buffer instead of killing it if it's visible in another tab.
+This only takes effect when `kill-buffer' is called non-interactively"
+  :type 'boolean
+  :group 'project-x-tabs)
+
+(defcustom project-x-tab-kill-buffers-on-close nil
+  "Whether to kill a projects buffers when its tab is closed."
+  :type '(choice (const :tag "Don't kill" nil)
+                 (const :tag "Kill without asking" t)
+                 (const :tag "Ask for confirmation" "ask"))
+  :group 'project-x-tabs)
+
+(defcustom project-x-tab-find-file-integration nil
+  "When non-nil, opening a file with `find-file' switches to its projects tab."
+  :type 'boolean
+  :group 'project-x-tabs
+  :set (lambda (sym val)
+         (let ((was-on (bound-and-true-p project-x-tabs-mode)))
+           (when was-on (project-x-tabs-mode -1))
+           (set-default sym val)
+           (when was-on (project-x-tabs-mode 1)))))
+
+(defcustom project-x-tab-override-commands
+  '(project-find-file project-find-dir project-kill-buffers project-switch-to-buffer
+    project-shell project-eshell project-dired project-compile
+    project-find-regexp project-query-replace-regexp)
+  "When `project-x-tabs-mode' is active, every command in this list is advised.
+with `default-directory' bound to the tabs root, regardless of the file you're on."
+  :type '(repeat function)
+  :group 'project-x-tabs
+  :set (lambda (sym val)
+         (let ((was-on (bound-and-true-p project-x-tabs-mode)))
+           (when was-on (project-x-tabs-mode -1))
+           (set-default sym val)
+           (when was-on (project-x-tabs-mode 1)))))
+
+;; Internal state
+;; ====================
+
+(defvar project-x--tab-name-map (make-hash-table :test 'equal)
+  "Expanded project root which gives you a name-info alist.
+Each value is: ((dir-name . STR) (base-name . STR-OR-NIL) (unique-name . STR))")
+
+(defconst project-x--tab-root-attr 'project-x-root-dir
+  "The symbol stored as a tab plist key to hold the bound project root.")
+
+;; for each project with a display name (base-name), compare its
+;; path against every other project sharing that name. Walk both paths
+;; from deepest to shallowest, dropping identical parts from the front
+;; *until* they differ. The remaining elements of the conflict determines the
+;; minimal suffix needed to disambiguate, the result is appended as "[suffix]"
+
+(defun project-x--tab-path-elements (dir)
+  "Return components of DIR ordered from deepest to shallowest."
+  (let ((dir (directory-file-name (expand-file-name dir))))
+    (butlast (reverse
+              (if (fboundp 'file-name-split) ; emacs 28+
+                  (file-name-split dir)
+                (split-string dir "/"))))))
+
+(defun project-x--tab-unique-path-elements (dir1 dir2 &optional base1 base2)
+  "Return the differing tail elements of DIR1 and DIR2 as a cons (ELS1 . ELS2).
+BASE1 / BASE2 are optional session labels.  When a custom label differs from the
+physical directory name it is prepended so label-based conflicts are also resolved"
+  (let ((els1 (project-x--tab-path-elements dir1))
+        (els2 (project-x--tab-path-elements dir2)))
+    (when (and base1 (not (equal base1 (car els1)))) (push base1 els1))
+    (when (and base2 (not (equal base2 (car els2)))) (push base2 els2))
+    (while (and (car els1) (car els2) (string= (car els1) (car els2)))
+      (pop els1) (pop els2))
+    (cons els1 els2)))
+
+(defun project-x--tab-compute-unique-name (dir)
+  "Compute the unique tab name for the project at DIR.
+Reads current `project-x--tab-name-map' and return the minimal
+unambiguous name string."
+  (let* ((dir (expand-file-name dir))
+         (entry (gethash dir project-x--tab-name-map))
+         (dir-name (file-name-nondirectory (directory-file-name dir)))
+         (base (or (alist-get 'base-name entry) dir-name))
+         max-path
+         (max-len most-negative-fixnum)
+         (min-len most-positive-fixnum))
+    (maphash
+     (lambda (other-dir other-entry)
+       (unless (string= dir other-dir)
+         (let ((other-base (or (alist-get 'base-name other-entry)
+                               (alist-get 'dir-name  other-entry))))
+           (when (string= base other-base)
+             (let* ((diff (project-x--tab-unique-path-elements
+                           dir other-dir base other-base))
+                    (els (car diff))
+                    (len (length els)))
+               (setq min-len (min min-len len))
+               (when (> len max-len)
+                 (setq max-len len max-path els)))))))
+     project-x--tab-name-map)
+    (if (null max-path)
+        base  ; no conflicts means use base name as-is
+      (let* ((take   (1+ (- max-len min-len)))
+             (suffix (string-join
+                      (reverse (butlast max-path (- (length max-path) take)))
+                      "/")))
+        (if (string-empty-p suffix)
+            base
+          (format project-x-tab-name-format base suffix))))))
+
+(defun project-x--tab-name-register (dir)
+  "Ensure DIR is registered in `project-x--tab-name-map'.
+The base-name is taken from the current session label, which is
+instead the directory name if no custom label has been set yet."
+  (let* ((dir      (expand-file-name dir))
+         (dir-name (file-name-nondirectory (directory-file-name dir)))
+         (base     (project-x--session-label dir)))
+    (unless (gethash dir project-x--tab-name-map)
+      (puthash dir `((dir-name   . ,dir-name)
+                     (base-name  . ,base)
+                     (unique-name . ,base))
+               project-x--tab-name-map))))
+
+(defun project-x--tab-name-unregister (dir)
+  "Unregister DIR from `project-x--tab-name-map'."
+  (remhash (expand-file-name dir) project-x--tab-name-map))
+
+(defun project-x--tab-name-map-cleanup ()
+  "Remove map entries from projects that no longer have an open tab."
+  (let ((live-dirs (delq nil
+                         (mapcar (lambda (tab)
+                                   (when-let ((r (project-x--tab-get-root tab)))
+                                     (expand-file-name r)))
+                                 (funcall tab-bar-tabs-function)))))
+    (maphash (lambda (dir _)
+               (unless (member dir live-dirs)
+                 (remhash dir project-x--tab-name-map)))
+             (copy-hash-table project-x--tab-name-map))))
+
+;; Tab attribute accessors
+;; =================================
+
+(defun project-x--tab-get-root (&optional tab)
+  "Return the project root stored in TAB (or the current tab if nil)."
+  (alist-get project-x--tab-root-attr
+             (or tab (tab-bar--current-tab))))
+
+(defun project-x--tab-set-root (dir)
+  "Store DIR as the project root for the current tab and register it."
+  (let* ((tabs (funcall tab-bar-tabs-function))
+         (idx  (tab-bar--current-tab-index tabs))
+         (tab  (nth idx tabs))
+         (slot (assq project-x--tab-root-attr tab))
+         (expanded (and dir (expand-file-name dir))))
+    (if slot
+        (setcdr slot expanded)
+      (when expanded
+        (nconc tab `((,project-x--tab-root-attr . ,expanded)))))
+    (when expanded
+      (project-x--tab-name-register expanded))))
+
+(defun project-x--tab-find-by-root (dir)
+  "Return a list of tabs where the root matches DIR."
+  (let ((target (expand-file-name dir)))
+    (seq-filter (lambda (tab)
+                  (when-let ((root (project-x--tab-get-root tab)))
+                    (string= (expand-file-name root) target)))
+                (funcall tab-bar-tabs-function))))
+
+;; Tab name update
+;; =========================
+
+(defun project-x--tab-update-names ()
+  "Recompute unique names for all project tabs and rename them in the tab bar."
+  (project-x--tab-name-map-cleanup)
+  ;; first pass: update the unique-name field in the map for every entry
+  (maphash (lambda (dir entry)
+             (let ((uname (project-x--tab-compute-unique-name dir)))
+               (setcdr (assq 'unique-name entry) uname)))
+           project-x--tab-name-map)
+  ;; second pass: write the names into the actual tab objects
+  (dolist (tab (funcall tab-bar-tabs-function))
+    (when-let* ((root  (project-x--tab-get-root tab))
+                (entry (gethash (expand-file-name root) project-x--tab-name-map))
+                ;; tabs the user has explicitly renamed with `tab-bar-rename-tab'
+                ((not (eq (alist-get 'explicit-name tab) t))))
+      (setcdr (assq 'name tab) (alist-get 'unique-name entry))
+      (setcdr (assq 'explicit-name tab) 'project-x)))
+  (force-mode-line-update t))
+
+(defun project-x--tab-sync-label (dir label)
+  "Update the tab name map for DIR to use LABEL as the new base-name.
+Called from `project-x-rename-session' to keep tab names in sync."
+  (let* ((expanded (expand-file-name dir))
+         (entry    (gethash expanded project-x--tab-name-map)))
+    (if entry
+        (setcdr (assq 'base-name entry) label)
+      ;; edge case: tabs mode was just enabled and map entry doesn't exist yet
+      (project-x--tab-name-register expanded)
+      (when-let ((e (gethash expanded project-x--tab-name-map)))
+        (setcdr (assq 'base-name e) label)))
+    (project-x--tab-update-names)))
+
+;; Tab lifecycle
+;; =================
+
+(defun project-x--tab-select-or-create (dir)
+  "Select the existing tab for project DIR or create a new one.
+Returns t if a new tab was created, nil if an existing one was selected."
+  (if-let ((tab (car (project-x--tab-find-by-root dir))))
+      (prog1 nil
+        (tab-bar-select-tab (1+ (tab-bar--tab-index tab))))
+    (tab-bar-new-tab)
+    ;; Reminder: `tab-bar-new-tab' duplicates the current tabs entire window layout,
+    ;; which means the new tab initially shows the previous projects/tabs buffers
+    ;; instead change to a single clean window immediately so that none of those
+    ;; foreign buffers linger in the new tab, which would otherwise complain
+    ;; "This window displayed the file..." messages when the project/tab is killed
+    (delete-other-windows)
+    ;; Reminder: do NOT set `default-directory' here. Because the current buffer may
+    ;; belong to another project, so changing its default-directory would cause
+    ;; project-kill-buffers to wrongly include it in the new projects buffer list
+    ;; `project-switch-project' already sets project-current-directory-override
+    ;; for subsequent commands, and project-x--tab-override-a handles command
+    ;; isolation via the tab's root attribute
+    (project-x--tab-set-root dir)
+    (project-x--tab-update-names)
+    t))
+
+(defun project-x--tab-close-current ()
+  "Close or reset the current tab after its projects buffers have been killed."
+  (let* ((tabs     (funcall tab-bar-tabs-function))
+         (curr-tab (assq 'current-tab tabs))
+         (root     (project-x--tab-get-root curr-tab)))
+    (if (length> tabs 1)
+        ;; if there's more than one tab, close this one without re-triggering the hook
+        (let ((tab-bar-tab-pre-close-functions
+               (remq 'project-x--tab-pre-close-hook
+                     tab-bar-tab-pre-close-functions)))
+          (tab-bar-close-tab))
+      ;; last tab, detach it from the project and restore the default name
+      (let ((slot (assq project-x--tab-root-attr curr-tab)))
+        (when slot (setcdr slot nil)))
+      (let ((default-name (if (functionp project-x-default-tab-name)
+                              (funcall project-x-default-tab-name)
+                            project-x-default-tab-name)))
+        (setcdr (assq 'name curr-tab) default-name)
+        (setcdr (assq 'explicit-name curr-tab) 'project-x-def)))
+    (when root
+      (project-x--tab-name-unregister root)
+      (project-x--tab-update-names))))
+
+(defun project-x--tab-set-default-name ()
+  "Rename the tab bar's initial tab to `project-x-default-tab-name'."
+  (when-let* (project-x-rename-initial-tab
+              (name (if (functionp project-x-default-tab-name)
+                        (funcall project-x-default-tab-name)
+                      project-x-default-tab-name))
+              (tabs (funcall tab-bar-tabs-function))
+              ((length= tabs 1))
+              (tab (assq 'current-tab tabs))
+              ((not (project-x--tab-get-root tab)))
+              ((not (eq (alist-get 'explicit-name tab) t))))
+    (setcdr (assq 'name tab) name)
+    (setcdr (assq 'explicit-name tab) 'project-x-def)
+    (force-mode-line-update t)))
+
+;; Advices
+;; ===============
+
+(defun project-x--tab-switch-project-a (orig-fn dir &rest args)
+  "Select/create tab for DIR, THEN restore session.
+For existing tabs, the tab already holds its window configuration.
+For new tabs ORIG-FN is called which triggers full session restore."
+  (let ((dir (expand-file-name (or dir default-directory))))
+    (if (project-x--tab-select-or-create dir)
+        ;; new tab: run the full project switch (which triggers session restore)
+        (apply orig-fn dir args)
+      ;; existing tab selected: the tabs windows are already correct
+      nil)))
+
+(defun project-x--tab-kill-buffers-a (orig-fn &rest args)
+  "Close the project tab if the user confirms `project-kill-buffers'.
+If the user cancels it then the tab is left untouched.
+All other bindings (tabs, curr-tab, root) are resolved AFTER the kill."
+  (when-let* (((apply orig-fn args))
+              (tabs     (funcall tab-bar-tabs-function))
+              (curr-tab (assq 'current-tab tabs))
+              (root     (project-x--tab-get-root curr-tab)))
+    (if (length> tabs 1)
+        ;; remove the pre-close hook so it doesn't try to kill buffers again
+        (let ((tab-bar-tab-pre-close-functions
+               (remq 'project-x--tab-pre-close-hook
+                     tab-bar-tab-pre-close-functions)))
+          (tab-bar-close-tab))
+      ;; last remaining tab: detach from the project and reset its name
+      (let ((default-name (if (functionp project-x-default-tab-name)
+                              (funcall project-x-default-tab-name)
+                            project-x-default-tab-name)))
+        (when-let ((slot (assq project-x--tab-root-attr curr-tab)))
+          (setcdr slot nil))
+        (setcdr (assq 'name curr-tab) default-name)
+        (setcdr (assq 'explicit-name curr-tab) 'project-x-def)))
+    (project-x--tab-name-unregister root)
+    (project-x--tab-update-names)))
+
+(defun project-x--tab-project-current-a (orig-fn &rest args)
+  "Switch tabs when a project is selected interactively.
+When the user is prompted for a project and they choose one
+that belongs to a different tab, switch to that tab."
+  (let ((proj (apply orig-fn args)))
+    (when-let* (proj
+                ((car args)) ; maybe-prompt was non-nil
+                (proj-dir (expand-file-name (project-root proj)))
+                (curr-root (project-x--tab-get-root))
+                ((not (and curr-root
+                           (string= (expand-file-name curr-root) proj-dir)))))
+      (project-x--tab-select-or-create proj-dir))
+    proj))
+
+(defun project-x--tab-bury-buffer-a (fn &optional buffer)
+  "Advice for `kill-buffer': bury BUFFER when it is visible in another tab.
+Only intercepts non-interactive calls (so explicit \\[kill-buffer] always kills).
+Requires `tab-bar-get-buffer-tab' which is available in Emacs 29+."
+  (if (and project-x-tab-bury-buffer
+           (not (called-interactively-p 'any))
+           (or (null buffer) (eq (get-buffer buffer) (current-buffer)))
+           (fboundp 'tab-bar-get-buffer-tab)
+           (tab-bar-get-buffer-tab buffer t t t))
+      (progn
+        (message "Buffer visible in another tab — burying instead of killing.")
+        (bury-buffer buffer))
+    (funcall fn buffer)))
+
+(defun project-x--tab-find-file-a (orig-fn &rest args)
+  "Advice for `find-file': switch to the opened file's project tab.
+Only active when `project-x-tab-find-file-integration' is non-nil."
+  (when-let* ((file (car args))
+              (proj (project-current nil (file-name-directory
+                                          (expand-file-name file))))
+              (root (project-root proj)))
+    (let ((project-switch-commands #'ignore))
+      (project-switch-project root)))
+  (apply orig-fn args))
+
+(defun project-x--tab-pre-close-hook (tab _last-tab-p)
+  "Hook for `tab-bar-tab-pre-close-functions' optionally kill project buffers.
+Respects `project-x-tab-kill-buffers-on-close'."
+  (when-let* ((killp project-x-tab-kill-buffers-on-close)
+              (root  (project-x--tab-get-root tab))
+              (proj  (project-current nil root))
+              ((string= (expand-file-name (project-root proj))
+                        (expand-file-name root))))
+    (project-kill-buffers (not (equal killp "ask")) proj)))
+
+(defun project-x--tab-override-a (orig-fn &rest args)
+  "Run ORIG-FN with `default-directory' bound to the current tab's root."
+  (let ((default-directory (or (project-x--tab-get-root) default-directory)))
+    (apply orig-fn args)))
+
+;; Commands
+;; ==================
+
+;;;###autoload
+(defun project-x-detach-buffer-to-tab (buffer)
+  "Switch to or create the tab for BUFFER's project, then display BUFFER there.
+With a prefix argument, prompts for which buffer to detach."
+  (interactive
+   (list (if current-prefix-arg
+             (read-buffer "Buffer to detach: ")
+           (current-buffer))))
+  (with-current-buffer buffer
+    (if-let* ((proj (project-current))
+              (root (project-root proj)))
+        (progn
+          (bury-buffer)
+          (project-x--tab-select-or-create root)
+          (switch-to-buffer buffer))
+      (user-error "Buffer %S is not part of any project" (buffer-name)))))
+
+;;;###autoload
+(defun project-x-change-tab-root-dir (dir)
+  "Manually attach the current tab to the project at DIR.
+Useful when you want two tabs pointing at the same project with different
+window layouts, or when you created a tab independently of project switching."
+  (interactive
+   (list (completing-read
+          "Project root for this tab (leave blank to detach): "
+          (delete-dups
+           (delq nil (mapcar #'project-x--tab-get-root
+                             (funcall tab-bar-tabs-function)))))))
+  (let* ((tabs  (funcall tab-bar-tabs-function))
+         (idx   (tab-bar--current-tab-index tabs))
+         (tab   (nth idx tabs))
+         (slot  (assq project-x--tab-root-attr tab))
+         (root  (and dir (not (string-empty-p dir)) (expand-file-name dir))))
+    (if slot
+        (setcdr slot root)
+      (when root (nconc tab `((,project-x--tab-root-attr . ,root)))))
+    (when root (project-x--tab-name-register root))
+    (project-x--tab-update-names)))
+
+;; Tabs-mode minor mode
+;; =====================
+
+;;;###autoload
+(define-minor-mode project-x-tabs-mode
+  "One dedicated tab per project with built-in context isolation.
+`project-switch-project' creates or selects a per-project tab.
+`project-kill-buffers' closes the project's tab."
+  :global t
+  :group 'project-x-tabs
+  (if project-x-tabs-mode
+      (progn
+        (when (< emacs-major-version 28)
+          (setq project-x-tabs-mode nil)
+          (error "project-x-tabs-mode requires Emacs 28 or later"))
+        (require 'tab-bar)
+        (tab-bar-mode 1)
+        (advice-add 'project-switch-project :around #'project-x--tab-switch-project-a)
+        (advice-add 'project-kill-buffers   :around #'project-x--tab-kill-buffers-a)
+        (advice-add 'project-current        :around #'project-x--tab-project-current-a)
+        (advice-add 'kill-buffer            :around #'project-x--tab-bury-buffer-a)
+        (when project-x-tab-find-file-integration
+          (advice-add 'find-file :around #'project-x--tab-find-file-a))
+        ;; run project commands in the tab's root dir
+        (dolist (cmd project-x-tab-override-commands)
+          (advice-add cmd :around #'project-x--tab-override-a))
+        (add-hook 'tab-bar-tab-pre-close-functions #'project-x--tab-pre-close-hook)
+        (add-hook 'server-after-make-frame-hook     #'project-x--tab-set-default-name)
+        ;; seed the name map from any tabs that already have a root dir set
+        (dolist (tab (funcall tab-bar-tabs-function))
+          (when-let ((root (project-x--tab-get-root tab)))
+            (project-x--tab-name-register root)))
+        (project-x--tab-update-names)
+        (project-x--tab-set-default-name))
+    (advice-remove 'project-switch-project #'project-x--tab-switch-project-a)
+    (advice-remove 'project-kill-buffers   #'project-x--tab-kill-buffers-a)
+    (advice-remove 'project-current        #'project-x--tab-project-current-a)
+    (advice-remove 'kill-buffer            #'project-x--tab-bury-buffer-a)
+    (advice-remove 'find-file              #'project-x--tab-find-file-a)
+    (dolist (cmd project-x-tab-override-commands)
+      (advice-remove cmd #'project-x--tab-override-a))
+    (remove-hook 'tab-bar-tab-pre-close-functions #'project-x--tab-pre-close-hook)
+    (remove-hook 'server-after-make-frame-hook     #'project-x--tab-set-default-name)
+    (clrhash project-x--tab-name-map)))
+
+
+;; 'Local' project backend
+;; ==================================================
+
 (defcustom project-x-local-identifier ".project"
   "Filename(s) that identifies a directory as a project.
 You can specify a single filename or a list of names."
@@ -471,12 +996,9 @@ matching root as a `local' project."
 (defun project-x-add-local-project (&optional dir)
   "Ensure DIR is recognized as a project and register it with `project.el'.
 Creates a marker file from `project-x-local-identifier' if missing.
-If the marker already exists (e.g., after `project-forget-project'),
-simply re-register the project in memory."
+If the marker already exists, simply re-registers the project in memory."
   (interactive "DDirectory for project root: ")
-  (let* ((dir (or dir default-directory))
-         (dir (file-name-as-directory (expand-file-name dir)))
-         ;; extract the marker name, handling both string and list format
+  (let* ((dir (file-name-as-directory (expand-file-name (or dir default-directory))))
          (marker-name (if (listp project-x-local-identifier)
                           (car project-x-local-identifier)
                         project-x-local-identifier))
@@ -548,13 +1070,11 @@ Silently skips projects where the directory cannot be resolved like TRAMP"
                                        (project--find-in-directory dir)
                                      (error nil)))
                                  dirs)))
-         (choices
-          (mapcar
-           (lambda (proj)
-             (let* ((root (project-root proj))
-                    (label (project-x--session-label root)))
-               (cons (format "%s" label) root)))
-           projects)))
+         (choices (mapcar (lambda (proj)
+                            (let* ((root  (project-root proj))
+                                   (label (project-x--session-label root)))
+                              (cons (format "%s" label) root)))
+                          projects)))
     (cdr (assoc (completing-read "Switch to project: " choices nil t)
                 choices))))
 
@@ -563,9 +1083,7 @@ Silently skips projects where the directory cannot be resolved like TRAMP"
 (defun project-x--handle-forget-project (orig-fun project &rest args)
   "Remove session data when PROJECT is forgotten.
 PROJECT can be either a project object or a directory string."
-  (let* ((dir (if (stringp project)
-                  project
-                (project-root project)))
+  (let* ((dir (if (stringp project) project (project-root project)))
          (key (project-x--project-root-key dir)))
     (project-x--ensure-window-state-loaded)
     (when (assoc key project-x-window-alist #'equal)
@@ -576,21 +1094,18 @@ PROJECT can be either a project object or a directory string."
 
 ;;;###autoload
 (define-minor-mode project-x-mode
-  "Minor mode to enable extra convenience features for project.el.
-When enabled, save and load project window states.
-Recognize any directory that contains (or whose parent
-contains) a special file as a project."
+  "Minor mode adding session persistence and convenience features to project.el.
+For tab-bar-project isolation, also enable `project-x-tabs-mode' (Emacs 28+)."
   :global t
   :lighter ""
   :group 'project-x
   (if project-x-mode
       ;; Turning the mode ON
       (progn
-        (add-hook 'project-find-functions 'project-x-try-local 90)
-        (add-hook 'kill-emacs-hook 'project-x--window-state-write)
-        ;; Debounced auto-save hooks
+        (add-hook 'project-find-functions #'project-x-try-local 90)
+        (add-hook 'kill-emacs-hook        #'project-x--window-state-write)
         (add-hook 'window-configuration-change-hook #'project-x--schedule-auto-save)
-        (add-hook 'kill-buffer-hook #'project-x--schedule-auto-save)
+        (add-hook 'kill-buffer-hook                 #'project-x--schedule-auto-save)
         (project-x--window-state-read)
         ;; Keybindings (safe registration)
         (unless (lookup-key project-prefix-map (kbd "w"))
@@ -607,9 +1122,9 @@ contains) a special file as a project."
         (advice-add 'project-forget-project :around #'project-x--handle-forget-project))
     ;; Turning mode OFF
     (remove-hook 'project-find-functions #'project-x-try-local)
-    (remove-hook 'kill-emacs-hook #'project-x--window-state-write)
+    (remove-hook 'kill-emacs-hook        #'project-x--window-state-write)
     (remove-hook 'window-configuration-change-hook #'project-x--schedule-auto-save)
-    (remove-hook 'kill-buffer-hook #'project-x--schedule-auto-save)
+    (remove-hook 'kill-buffer-hook                 #'project-x--schedule-auto-save)
     (define-key project-prefix-map (kbd "w") nil)
     (define-key project-prefix-map (kbd "j") nil)
     (define-key project-prefix-map (kbd "a") nil)

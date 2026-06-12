@@ -5,16 +5,18 @@
 ** What problem does this solve? (project vs session management)
 Having to learn two different groups of commands for doing the same thing.
 
-The traditional Emacs workflow is to use =project.el= or =projectile= for *project-management*, and a separate *session-management* package for saving and restoring your workspace (buffers, windows, point for that project). While these packages can do much more, many people use them only to save and restore a project exactly as they left it. That split forces you to remember two different groups of commands.
+The traditional Emacs workflow is to use =project.el= or =projectile= for *project-management*, and a separate *session-management* package for saving and restoring your workspace (buffers, windows, point). While these packages can do much more, many people use them only to save and restore a project as they left it. That split forces you to remember two different groups of commands.
 
-Project-x collapses that split: every project is treated as a session, and restoring a session is identical to restoring a project. That means you keep the exact =project.el= keybindings you already know, while Project-x transparently handles saving, restoring, and syncing the project’s session state.
+=Project-x= collapses that split: every project is treated as a session, and restoring a session is identical to restoring a project. That means you keep the same =project.el= keybindings you already know, while =Project-x= transparently handles saving, restoring, and syncing the project’s session state.
 
 So:
-- =project-switch-project= now switches sessions too
-- =project-kill-buffers= closes the project & the session, optionally saving the session state right where you left off
-- =project-forget-project= now automatically clears session data on top of removing the project
+- =project-switch-project= now also switches sessions
+- =project-kill-buffers= closes the project *and* the session, optionally saving the session state right where you left off
+- =project-forget-project= now automatically clears session data as well as removing the project
 
-*Note:* If you pair this up with Emacs 27's =tab-bar-mode= or something like [[https://github.com/abougouffa/one-tab-per-project][one-tab-per-project]], you can *quick-switch* between your already opened sessions using =tab-bar-switch-to-tab= (once again, no new commands). Perhaps this process will be automated in a future update of project-x.
+#+BEGIN_QUOTE
+As of /v0.3.0/, =project-x= includes =project-x-tabs-mode=. Which substitutes the need to pair this package with other =tab-bar-mode= packages like [[https://codeberg.org/mclear-tools/tabspaces][tabspaces]] or [[https://github.com/abougouffa/one-tab-per-project][one-tab-per-project (otpp)]], allowing for an *all-in-one* solution between projects, sessions *and* tabs. Though, you can also choose to keep this off and continue using the above solutions.
+#+END_QUOTE
 
 + Enhanced project switching: When you switch projects you switch window configurations too, (re)opening files as needed.
   #+ATTR_ORG: :width 500
@@ -38,10 +40,12 @@ Starting with Emacs 29, you can install packages directly with =package-vc-insta
     :after project
     :config
     ;; auto-save project state after 5 seconds of idle time
-    ;; set to nil to disable auto-save
-    (setq project-x-auto-save-delay 5)
-    (setq project-prompter #'project-x--project-prompt) ; use custom prompter (optional)
-    (project-x-mode 1))
+    (setq project-x-auto-save-delay 5) ; nil to disable autosave
+    ;; use the custom prompter that shows session labels (optional)
+    (setq project-prompter #'project-x--project-prompt)
+    (project-x-mode 1)
+    ;; tab-bar-mode integration (optional)
+    (project-x-tabs-mode 1))
 #+end_src
 
 *** Manual Configuration (Without minor-mode)
@@ -79,18 +83,18 @@ The =project-x-mode= minor-mode is provided for convenience. It defines keys und
 |------------+-------------------------------+--------------------------------------------|
 | =C-x p w=  | =project-x-window-state-save= | Manually save your current project session |
 | =C-x p j=  | =project-x-window-state-load= | Load session from a project                |
-| =C-x p J=  | =project-x-windows=           | Load session from project dispatch menu    |
+| =C-x p J=  | =project-x-windows=           | Reload session for the current project     |
 | =C-x p a=  | =project-x-add-local-project= | Add project + root marker                  |
 | =C-x p r=  | =project-x-rename-session=    | Rename the session (without changing path) |
 | =C-x p d=  | =project-x-clear-session=     | Clear session data                         |
 
 **** Workflow
-1. To add a new project (+ root marker), do =C-x p a= with DIR. To remove it from the project list, do =project-forget-project=.
+1. To add a new project (+ root marker), do =C-x p a= with DIR. To remove it from the project list, use =project-forget-project=.
 2. Enter the project with =project-switch-project= or =C-x p j=, and save the current session state with =C-x p w=.
 3. If =project-x-auto-save-delay= is set, your session is saved automatically once Emacs is idle for the specified number of seconds (e.g. after switching buffers or changing window layout).
-4. If you make any changes (buffers, windows, etc.), =C-x p J= will revert back to the /last/ saved session state (for the project you are currently in).
-5. Optionally use =C-x p r= to rename the project in the list. This only changes the name of the /session/ without touching the actual project name or its path.
-6. To close the session, simply use project.el's =project-kill-buffers=.
+4. If you make any changes (buffers, windows, etc.), =C-x p J= will revert back to the /last/ saved session state for the current project.
+5. Optionally use =C-x p r= to rename the session label. This only changes the display name, the project path is untouched. If =project-x-tabs-mode= is active, the corresponding tab is renamed automatically.
+6. To close the session, use =project-kill-buffers=.
 
 *** 'Local' projects
 To recognize 'local' projects with a root marker somewhere in the path, turn on =project-x-mode= OR run:
@@ -105,9 +109,8 @@ All =project.el= features should work as expected (Now works with =project-vc-ex
 :ID:       c1326cad-5dd9-4789-8e5e-74f5b012b546
 :END:
 - This is currently limited to storing only the current frame configuration.
-- The only state saved is your project files, =dired= buffers, and (if enabled via =project-x-save-extra-buffers=) =magit-status=, =eshell=, and =compilation= buffers. No minor modes, registers, or other special buffers (help buffers, scratch, etc.) are recorded. For complete recall, look into the built-in Desktop library.
-- If you use multiple Emacs instances, the project states saved to disk can get overwritten.
-- This doesn't handle returning to previous state after closing a project. This can be solved either with =winner-undo= or a =tab-bar-mode= based package like =Tabspaces= / =otpp.el=.
+- The only state saved is your project files, =dired= buffers, and (if enabled via =project-x-save-extra-buffers=) =magit-status=, =eshell=, and =compilation= buffers. No minor modes, registers, or other special buffers are recorded. For complete recall, look into the built-in Desktop library.
+- If you use multiple Emacs instances, project states saved to disk can get overwritten.
 
 ** Alternatives
 *** How does this compare with...
@@ -117,7 +120,10 @@ Project-x uses window configurations under the hood. However, it has a few advan
 - Your project state is associated with the project instead of with registers or data structures from other packages.
 
 **** ...Tabs/Workspaces/persp etc?
-If you think in terms of projects, you may find it more convenient to use =project-x= through the project dispatch menu (=C-x p p=) to continue working from where you left off. This is a helper library to define and handle projects, not an overarching modification to your Emacs usage pattern.
+If you think in terms of projects, you may find it more convenient to use =project-x= through the project dispatch menu (=C-x p p=) to continue working from where you left off. This is a helper library to define and handle projects, not an overarching modification to your Emacs usage pattern. If you want full tab isolation, =project-x-tabs-mode= is now built in.
+
+**** ...Tabspaces/one-tab-per-project?
+=project-x-tabs-mode= is inspired by and borrows from [[https://github.com/abougouffa/one-tab-per-project][otpp]]. The key improvement with using it inside =project-x= instead is that your renamed session labels and tab names are a single source of truth, renaming one renames the other. However, if you want a standalone tab package decoupled from project-x with more features, =otpp.el= remains an excellent option.
 
 **** ...Burly?
 [[https://github.com/alphapapa/burly.el][Burly]] provides a more universal method to save and restore frames and window configurations as Emacs bookmarks (thus persistent across sessions) that is not limited to the project metaphor. If you are looking for this feature but in a more general Emacs context you might be better served by it.
@@ -130,7 +136,8 @@ See [[id:c1326cad-5dd9-4789-8e5e-74f5b012b546][Limitations]]. Desktop restores y
 
 ** Planned features
 - [X] Autosave the current project configuration when opening project files or switching projects.
-- [X] Improve reliability of session restoration via =project-switch-project=
+- [X] Improve reliability of session restoration via =project-switch-project=.
+- [X] =tab-bar-mode= integration with context isolation, unique names, and session label sync.
 - [ ] Save the window configuration across frames and tabs instead of only the current one.
 
 ** Maintenance Notice                                                :UPDATED:
@@ -149,6 +156,7 @@ Since this library uses the built-in Emacs API to store the state, it is very co
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slowdown, please raise an issue.
 
 ** Changelog
+- /New in v0.3.0:/ =project-x-tabs-mode=. Handles built-in =tab-bar-mode= actions during project switching, as well as context isolation for all =project.el= commands. Renaming a session via =C-x p r= now also renames the corresponding tab.
 - /New in v0.2.4:/ Added the custom toggle option =project-x-save-extra-buffers= to let users opt-out of saving or restoring special buffers (=magit=, =eshell=, =compilation=). Also added general optimisations for window restoration.
 - /New in v0.2.3:/ Replaced fixed-interval autosave with a debounced idle-timer (=project-x-auto-save-delay=). Added support for saving and restoring =magit-status=, =eshell=, and =compilation= buffers alongside regular file and =dired= buffers. =project-forget-project= now automatically removes session data.
 - /New in v0.2.2:/ Fixed *major* bug where Emacs's =uniquify= prevents =project-switch-project= from correctly restoring sessions. Fixed identical directory and buffer name causing race conditions.
