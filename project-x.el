@@ -916,6 +916,9 @@ window layouts, or when you created a tab independently of project switching."
 `project-kill-buffers' closes the project's tab."
   :global t
   :group 'project-x-tabs
+  (unless project-x-mode
+    (error "project-x-tabs-mode requires project-x-mode to be enabled first"))
+
   (if project-x-tabs-mode
       (progn
         (when (< emacs-major-version 28)
