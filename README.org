@@ -5,9 +5,9 @@
 ** What problem does this solve? (project vs session management)
 Having to learn two different groups of commands for doing the same thing.
 
-The traditional Emacs workflow is to use =project.el= or =projectile= for *project-management*, and a separate *session-management* package for saving and restoring your workspace (buffers, windows, point). While these packages can do much more, many people use them only to save and restore a project as they left it. That split forces you to remember two different groups of commands.
+The traditional Emacs workflow is to use =project.el= or =projectile= for *project-management*, and a separate package for *session-management*, which saves and restores your workspace. While these packages can do much more, many people use them only to save and restore a project as they left it. That split forces you to remember two different groups of commands.
 
-=Project-x= collapses that split: every project is treated as a session, and restoring a session is identical to restoring a project. That means you keep the same =project.el= keybindings you already know, while =Project-x= transparently handles saving, restoring, and syncing the project’s session state.
+=Project-x= collapses that split: every project is a session, and restoring a session is identical to restoring a project. That means you keep the same =project.el= keybindings you're already familiar with, while =Project-x= transparently handles saving, restoring, and syncing the project’s session state.
 
 So:
 - =project-switch-project= now also switches sessions
@@ -79,14 +79,17 @@ There are four main customization options right now:
 *** Session management
 The =project-x-mode= minor-mode is provided for convenience. It defines keys under the =project-prefix-map= (=C-x p=):
 
-| Keybinding | Command                       | Effect                                     |
-|------------+-------------------------------+--------------------------------------------|
-| =C-x p w=  | =project-x-window-state-save= | Manually save your current project session |
-| =C-x p j=  | =project-x-window-state-load= | Load session from a project                |
-| =C-x p J=  | =project-x-windows=           | Reload session for the current project     |
-| =C-x p a=  | =project-x-add-local-project= | Add project + root marker                  |
-| =C-x p r=  | =project-x-rename-session=    | Rename the session (without changing path) |
-| =C-x p d=  | =project-x-clear-session=     | Clear session data                         |
+| Keybinding  | Command                          | Effect                                         |
+|-------------+-----------------------------------+-------------------------------------------------|
+| =C-x p w=   | =project-x-window-state-save=    | Save to the project's *active* layout          |
+| =C-x p j=   | =project-x-window-state-load=    | Load session from a project                    |
+| =C-x p J=   | =project-x-windows=              | Reload session for the current project         |
+| =C-x p a=   | =project-x-add-local-project=    | Add project + root marker                      |
+| =C-x p r=   | =project-x-rename-session=       | Rename the session (without changing path)     |
+| =C-x p d=   | =project-x-clear-session=        | Clear session data (all layouts)               |
+| =C-x p l s= | =project-x-window-state-save-as= | Save the current layout under a (new) name     |
+| =C-x p l l= | =project-x-switch-layout=        | Switch the project to a different saved layout |
+| =C-x p l d= | =project-x-delete-layout=        | Delete a saved layout                          |
 
 **** Workflow
 1. To add a new project (+ root marker), do =C-x p a= with DIR. To remove it from the project list, use =project-forget-project=.
@@ -95,6 +98,17 @@ The =project-x-mode= minor-mode is provided for convenience. It defines keys und
 4. If you make any changes (buffers, windows, etc.), =C-x p J= will revert back to the /last/ saved session state for the current project.
 5. Optionally use =C-x p r= to rename the session label. This only changes the display name, the project path is untouched. If =project-x-tabs-mode= is active, the corresponding tab is renamed automatically.
 6. To close the session, use =project-kill-buffers=.
+
+**** Multiple layouts per project (new)
+Every project now has one *active* layout (called ~"default"~ until you name it otherwise), and =C-x p w= / auto-save always targets it.
+
+To keep *several layouts* for the *same* project:
+1. Arrange your windows the way you want, then run =C-x p l s= (=project-x-window-state-save-as=) and give it a name, e.g. ~"debugging"~.
+2. Repeat for as many layouts as you want (~"writing"~, ~"review"~, etc). From then on, =C-x p w= saves back to whichever layout is *currently active*, so you don't need to keep re-typing the name.
+3. Use =C-x p l l= (=project-x-switch-layout=) to jump between saved layouts for the current project. Whichever one you switch to becomes the *new active layout*.
+4. Use =C-x p l d= (=project-x-delete-layout=) to remove a layout you no longer need. The /last remaining/ layout for a project can't be deleted this way, use =C-x p d= to clear the whole session instead.
+
+Existing sessions saved /before/ this feature keep working as-is: they're just treated as the ~"default"~ layout the first time they're loaded.
 
 *** 'Local' projects
 To recognize 'local' projects with a root marker somewhere in the path, turn on =project-x-mode= OR run:
@@ -134,12 +148,6 @@ See [[id:c1326cad-5dd9-4789-8e5e-74f5b012b546][Limitations]]. Desktop restores y
 **** ..Projectile?
 =project.el= is built-in and fast, and =project-x= is only a small addition to it. As far as I know, Projectile does not natively offer the ability to save and restore your project sessions (including window configurations) out of the box.
 
-** Planned features
-- [X] Autosave the current project configuration when opening project files or switching projects.
-- [X] Improve reliability of session restoration via =project-switch-project=.
-- [X] =tab-bar-mode= integration with context isolation, unique names, and session label sync.
-- [ ] Save the window configuration across frames and tabs instead of only the current one.
-
 ** Maintenance Notice                                                :UPDATED:
 As of 2026, this package is maintained by [[https://github.com/vmargb][@vmargb]].
 Original author: [[https://github.com/karthink][Karthik Chikmagalur]].
@@ -151,11 +159,10 @@ Contributions are welcome! Please:
 3. Submit a pull request with a clear description of your changes
 
 ** Technical notes
-Since this library uses the built-in Emacs API to store the state, it is very compact. The machinery to maintain and recreate project states is only four short =defun='s. Likewise, implementing a 'local' project backend is fewer than ten lines of code.
-
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slowdown, please raise an issue.
 
 ** Changelog
+- /New in v0.3.1:/ Multiple named window layouts per project (=project-x-window-state-save-as=, =project-x-switch-layout=, =project-x-delete-layout=, bound under =C-x p l=).
 - /New in v0.3.0:/ =project-x-tabs-mode=. Handles built-in =tab-bar-mode= actions during project switching, as well as context isolation for all =project.el= commands. Renaming a session via =C-x p r= now also renames the corresponding tab.
 - /New in v0.2.4:/ Added the custom toggle option =project-x-save-extra-buffers= to let users opt-out of saving or restoring special buffers (=magit=, =eshell=, =compilation=). Also added general optimisations for window restoration.
 - /New in v0.2.3:/ Replaced fixed-interval autosave with a debounced idle-timer (=project-x-auto-save-delay=). Added support for saving and restoring =magit-status=, =eshell=, and =compilation= buffers alongside regular file and =dired= buffers. =project-forget-project= now automatically removes session data.

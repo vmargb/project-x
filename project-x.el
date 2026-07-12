@@ -6,7 +6,7 @@
 ;; Author: Karthik Chikmagalur <karthik.chikmagalur@gmail.com>
 ;; Maintainer: vmargb <https://github.com/vmargb>
 ;; URL: https://github.com/vmargb/project-x
-;; Version: 0.3.0
+;; Version: 0.3.1
 ;; Package-Requires: ((emacs "27.1"))
 ;; Keywords: project, convenience, session, tools
 
@@ -35,10 +35,13 @@
 ;;
 ;; COMMANDS:
 ;;
-;; project-x-window-state-save : Save the window configuration of currently open project buffers
-;; project-x-window-state-load : Load a previously saved project window configuration
-;; project-x-add-local-project : Conveniently add project + root marker to any dir
-;; project-x-rename-session    : Rename the current project's display label
+;; project-x-window-state-save    : Save the window configuration to the project's active layout
+;; project-x-window-state-save-as : Save the window configuration as a new (or existing) named layout
+;; project-x-switch-layout        : Switch the current project to a different saved layout
+;; project-x-delete-layout        : Delete a saved layout from the current project
+;; project-x-window-state-load    : Load a previously saved project window configuration
+;; project-x-add-local-project    : Conveniently add project + root marker to any dir
+;; project-x-rename-session       : Rename the current project's display label and tab name
 ;;
 ;; TAB COMMANDS (project-x-tabs-mode, requires Emacs 28+):
 ;; project-x-detach-buffer-to-tab  : Move the current buffer to its project's tab
@@ -140,15 +143,56 @@ If FILE is specified, read from it instead."
   (unless project-x-window-alist
     (project-x--window-state-read)))
 
+;; =========================================================================
+;; Layouts
+;; 
+;; each project entry can now hold several named window layouts instead of
+;; just one. Older entries are migrated to the new multi-layer format
+(defun project-x--migrate-entry (entry)
+  "Upgrade the legacy single-layout ENTRY to the multi-layout format.
+Returns ENTRY unchanged when it is nil or already has a `layouts' key."
+  (if (or (null entry) (assq 'layouts entry))
+      entry
+    (let ((label   (alist-get 'label entry))
+          (buffers (alist-get 'buffers entry))
+          (windows (alist-get 'windows entry)))
+      `((label . ,label)
+        (current-layout . "default")
+        (layouts . (("default" . ((buffers . ,buffers)
+                                   (windows . ,windows)))))))))
+
+(defun project-x--entry-layouts (entry)
+  "Return the layouts alist of session ENTRY."
+  (alist-get 'layouts entry))
+
+(defun project-x--entry-current-layout (entry)
+  "Return the name of the active layout for ENTRY, defaults to \"default\"."
+  (or (alist-get 'current-layout entry) "default"))
+
+(defun project-x--entry-layout-data (entry layout-name)
+  "Return the (buffers . windows) data for LAYOUT-NAME in ENTRY, or nil."
+  (alist-get layout-name (project-x--entry-layouts entry) nil nil #'equal))
+
+(defun project-x--layout-names (dir)
+  "Return the list of saved layout names for project DIR."
+  (mapcar #'car (project-x--entry-layouts (project-x--session-entry dir))))
+
 (defun project-x--session-entry (dir)
-  "Return the saved session entry for DIR, or nil."
+  "Return the saved session entry for DIR, or nil.
+Upgrades legacy single-layout entries to the multi-layout format on read."
   (project-x--ensure-window-state-loaded)
-  (alist-get (project-x--project-root-key dir) project-x-window-alist nil nil #'equal))
+  (let* ((key (project-x--project-root-key dir))
+         (raw (alist-get key project-x-window-alist nil nil #'equal))
+         (migrated (project-x--migrate-entry raw)))
+    (unless (eq migrated raw)
+      (setf (alist-get key project-x-window-alist nil nil #'equal) migrated))
+    migrated))
 
 (defun project-x--session-has-window-state-p (dir)
-  "Return non-nil when DIR has a saved window state."
-  (and-let* ((entry (project-x--session-entry dir)))
-    (alist-get 'windows entry)))
+  "Return non-nil when DIR has at least one saved layout with window state."
+  (and-let* ((entry (project-x--session-entry dir))
+             (layouts (project-x--entry-layouts entry)))
+    (seq-some (lambda (kv) (alist-get 'windows (cdr kv))) layouts)))
 
 (defun project-x--default-session-label (dir)
   "Return a sensible default label for DIR."
@@ -252,39 +296,71 @@ Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignore
      ;; skip everything else by default
      (t nil))))
 
+(defun project-x--save-to-layout (dir layout-name)
+  "Capture the current window/buffer state for project DIR into LAYOUT-NAME.
+Creates the layout if it doesnt already exist, and marks it as DIRs
+active layout."
+  (project-x--ensure-window-state-loaded)
+  (let* ((label (project-x--session-label dir))
+         (entry (project-x--migrate-entry (project-x--session-entry dir)))
+         (layouts (project-x--entry-layouts entry))
+         (buffer-data nil))
+    ;; collect session data for all open project buffers
+    (dolist (buf (project-buffers (project-current)))
+      (when-let ((data (project-x--buffer-session-data buf)))
+        (push data buffer-data)))
+    (setf (alist-get layout-name layouts nil nil #'equal)
+          (list (cons 'buffers buffer-data)
+                (cons 'windows (window-state-get nil t))))
+    (project-x--set-session-entry
+     dir
+     `((label . ,label)
+       (current-layout . ,layout-name)
+       (layouts . ,layouts)))
+    (project-x--window-state-write) ;; save to disk
+    (message "Saved layout %S for %s" layout-name dir)))
+
+(defun project-x--target-project-dir (arg)
+  "Resolve which project directory a save/restore command should act on.
+ARG non-nil means prompt for a project.  Or else prefer the current
+tabs bound root (under `project-x-tabs-mode') and fall back to the
+current project."
+  (cond
+   (arg (project-prompt-project-dir))
+   ;; when tabs mode is on, prefer the tabs project root so that
+   ;; visiting a foreign file does not save to the wrong project
+   ((and (bound-and-true-p project-x-tabs-mode)
+         (fboundp 'project-x--tab-get-root)
+         (project-x--tab-get-root)))
+   ((project-current)
+    (project-root (project-current)))))
+
+;; Use `project-x-window-state-save-as' to save under a different layout name
 ;;;###autoload
 (defun project-x-window-state-save (&optional arg)
-  "Save current window state of project.
+  "Save current window state of project to its active layout.
 With optional prefix argument ARG, query for a project.
 When `project-x-tabs-mode' is active, saves the tab's bound project
 rather than the visited buffers project."
   (interactive "P")
-  (when-let*
-      ((dir (cond
-             (arg (project-prompt-project-dir))
-             ;; when tabs mode is on, prefer the tabs project root so that
-             ;; visiting a foreign file does not save to the wrong project
-             ((and (bound-and-true-p project-x-tabs-mode)
-                   (fboundp 'project-x--tab-get-root)
-                   (project-x--tab-get-root)))
-             ((project-current)
-              (project-root (project-current)))))
-       (dir (project-x--project-root-key dir))
-       (default-directory dir))
-    (project-x--ensure-window-state-loaded)
-    (let ((buffer-data nil)
-          (label (project-x--session-label dir)))
-      ;; collect session data for all open project buffers
-      (dolist (buf (project-buffers (project-current)))
-        (when-let ((data (project-x--buffer-session-data buf)))
-          (push data buffer-data)))
-      (project-x--set-session-entry
-       dir
-       (list (cons 'label label)
-             (cons 'buffers buffer-data)
-             (cons 'windows (window-state-get nil t)))))
-    (project-x--window-state-write) ;; save to disk
-    (message (format "Saved project state for %s" dir))))
+  (when-let* ((dir (project-x--target-project-dir arg))
+              (dir (project-x--project-root-key dir))
+              (default-directory dir))
+    (project-x--save-to-layout
+     dir (project-x--entry-current-layout (project-x--session-entry dir)))))
+
+;;;###autoload
+(defun project-x-window-state-save-as (name &optional arg)
+  "Save the current window state as a layout called NAME.
+If NAME already exists it is overwritten.  NAME becomes
+the projects active layout.  With optional prefix argument ARG,
+query for a project instead of using the current one."
+  (interactive (list (read-string "Save as layout: ") current-prefix-arg))
+  (when-let* ((dir (project-x--target-project-dir arg))
+              (dir (project-x--project-root-key dir))
+              (default-directory dir)
+              (name (if (string-empty-p (string-trim name)) "default" (string-trim name))))
+    (project-x--save-to-layout dir name)))
 
 ;; not every buffer is a file, for buffers that don't have file paths
 ;; (eshell-mode, magit-status-mode, compilation) they will need different init calls
@@ -356,57 +432,66 @@ Returns (expected-name . buffer) or nil."
 ;; this has been updated to fix a major bug where identical
 ;; buffer-names before and after project-switch will prevent the
 ;; switch from happening. I call these files "squatter buffers"
-(defun project-x--window-state-restore (dir)
+(defun project-x--window-state-restore (dir &optional layout-name)
   "Restore the saved window state for project directory DIR.
-Returns `restored' on success, `stale' when session buffers are all gone,
-or nil when no session was found."
+LAYOUT-NAME selects which saved layout to restore.  When missing, DIRs
+active layout is used instead.  LAYOUT-NAME becomes the active
+layout for DIR on success."
   (project-x--ensure-window-state-loaded)
-  (if-let* ((project-state (project-x--session-entry dir))
-            (window-config (alist-get 'windows project-state))
-            ;; support both new 'buffers key and legacy 'files key
-            (buffer-items (or (alist-get 'buffers project-state)
-                              (alist-get 'files project-state))))
+  (let* ((entry (project-x--session-entry dir))
+         (layout-name (or layout-name (project-x--entry-current-layout entry)))
+         (layout (project-x--entry-layout-data entry layout-name)))
+    (if-let* (layout
+              (window-config (alist-get 'windows layout))
+              ;; support both new 'buffers key and legacy 'files key
+              (buffer-items (or (alist-get 'buffers layout)
+                                (alist-get 'files layout))))
 
-      ;; prevent GC pauses and UI thrashing for large projects
-      (let* ((gc-cons-threshold (max gc-cons-threshold (* 50 1024 1024)))
-             (inhibit-redisplay t)
-             (inhibit-message t)
-             (name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
-             (squatter-renames nil))
-        ;; if every saved buffer failed to restore (files deleted, remote gone,
-        ;; extra-buffers turned off, etc.) report stale rather than applying a
-        ;; window config that references no live buffers, which would silently
-        ;; leave the user on whatever they had open before
-        (if (null name-buf-pairs)
-            'stale
-          ;; handle uniquify/squatter buffer collisions
-          (dolist (pair name-buf-pairs)
-            (let ((expected (car pair))
-                  (buf      (cdr pair)))
-              (unless (string= (buffer-name buf) expected)
-                (when-let ((squatter (get-buffer expected)))
-                  (let ((tmp (generate-new-buffer-name
-                              (concat " *px-tmp-" expected "*"))))
-                    (push (cons squatter (buffer-name squatter)) squatter-renames)
-                    (with-current-buffer squatter
-                      ;; disable uniquify strictly during the temporary swap
-                      (let ((uniquify-buffer-name-style nil))
-                        (rename-buffer tmp)))))
-                (with-current-buffer buf
-                  (let ((uniquify-buffer-name-style nil))
-                    (rename-buffer expected))))))
+        ;; prevent GC pauses and UI thrashing for large projects
+        (let* ((gc-cons-threshold (max gc-cons-threshold (* 50 1024 1024)))
+               (inhibit-redisplay t)
+               (inhibit-message t)
+               (name-buf-pairs (delq nil (mapcar #'project-x--restore-buffer buffer-items)))
+               (squatter-renames nil))
+          ;; if every saved buffer failed to restore (files deleted, remote gone,
+          ;; extra-buffers turned off) report `stale' to the user
+          (if (null name-buf-pairs)
+              'stale
+            ;; handle uniquify/squatter buffer collisions
+            (dolist (pair name-buf-pairs)
+              (let ((expected (car pair))
+                    (buf      (cdr pair)))
+                (unless (string= (buffer-name buf) expected)
+                  (when-let ((squatter (get-buffer expected)))
+                    (let ((tmp (generate-new-buffer-name
+                                (concat " *px-tmp-" expected "*"))))
+                      (push (cons squatter (buffer-name squatter)) squatter-renames)
+                      (with-current-buffer squatter
+                        ;; disable uniquify only during the temporary swap
+                        (let ((uniquify-buffer-name-style nil))
+                          (rename-buffer tmp)))))
+                  (with-current-buffer buf
+                    (let ((uniquify-buffer-name-style nil))
+                      (rename-buffer expected))))))
 
-          ;; restore the window configuration
-          (window-state-put window-config nil 'safe)
+            ;; restore the window configuration
+            (window-state-put window-config nil 'safe)
 
-          ;; give squatter buffers their names back safely
-          ;; uniquify is active here to safely handle any final collisions
-          (dolist (pair squatter-renames)
-            (when (buffer-live-p (car pair))
-              (with-current-buffer (car pair)
-                (rename-buffer (cdr pair) t))))
-          'restored))
-    nil))
+            ;; give squatter buffers their names back safely
+            ;; uniquify is active here to safely handle any final collisions
+            (dolist (pair squatter-renames)
+              (when (buffer-live-p (car pair))
+                (with-current-buffer (car pair)
+                  (rename-buffer (cdr pair) t))))
+
+            ;; track which layout is now active, so auto-save/`project-x-windows'
+            ;; continue to target the one the user is actually looking at
+            (unless (equal layout-name (project-x--entry-current-layout entry))
+              (setf (alist-get 'current-layout entry) layout-name)
+              (project-x--set-session-entry dir entry)
+              (project-x--window-state-write))
+            'restored))
+      nil)))
 
 ;; midway helper that routes both project-switch-project
 ;; and project-x-window-state-load into project-x--window-state-restore
@@ -467,6 +552,50 @@ Falls back to Dired at the project root when no session exists."
         (_         (dired dir)
                    (message "No saved session for this project, opened project root in Dired instead.")))
     (message "No current project")))
+
+;;;###autoload
+(defun project-x-switch-layout (name)
+  "Switch the current project to its saved layout NAME.
+Prompts with the list of layouts already saved for this project.
+The chosen layout becomes the new active layout."
+  (interactive
+   (let* ((dir (project-x--current-project-root-or-error))
+          (names (project-x--layout-names dir)))
+     (unless names
+       (user-error "No saved layouts for this project"))
+     (list (completing-read "Switch to layout: " names nil t))))
+  (let ((dir (project-x--current-project-root-or-error)))
+    (pcase (project-x--window-state-restore dir name)
+      ('restored (message "Switched to layout %S for %s" name dir))
+      ('stale    (message "Layout %S has no live buffers left to restore." name))
+      (_         (message "No saved layout %S for this project." name)))))
+
+;;;###autoload
+(defun project-x-delete-layout (name)
+  "Delete the saved layout NAME from the current project.
+Refuses to delete a projects only remaining layout"
+  (interactive
+   (let* ((dir (project-x--current-project-root-or-error))
+          (names (project-x--layout-names dir)))
+     (unless names
+       (user-error "No saved layouts for this project"))
+     (list (completing-read "Delete layout: " names nil t))))
+  (let* ((dir (project-x--current-project-root-or-error))
+         (entry (project-x--session-entry dir))
+         (layouts (project-x--entry-layouts entry)))
+    (unless (assoc name layouts #'equal)
+      (user-error "No such layout %S" name))
+    (when (<= (length layouts) 1)
+      (user-error "Refusing to delete the only layout, use `project-x-clear-session' instead"))
+    (when (yes-or-no-p (format "Delete layout %S for %s? " name dir))
+      (setq layouts (cl-remove name layouts :key #'car :test #'equal))
+      (setf (alist-get 'layouts entry) layouts)
+      ;; if the deleted layout was active, fall back to whatever's left
+      (when (equal name (project-x--entry-current-layout entry))
+        (setf (alist-get 'current-layout entry) (caar layouts)))
+      (project-x--set-session-entry dir entry)
+      (project-x--window-state-write)
+      (message "Deleted layout %S for %s" name dir))))
 
 
 ;; Tab for each project integration (requires Emacs 28+, tab-bar-mode)
@@ -1095,6 +1224,15 @@ PROJECT can be either a project object or a directory string."
       (project-x--window-state-write))
     (apply orig-fun project args)))
 
+(defvar project-x-layout-map
+  (let ((map (make-sparse-keymap)))
+    (define-key map (kbd "s") #'project-x-window-state-save-as)
+    (define-key map (kbd "l") #'project-x-switch-layout)
+    (define-key map (kbd "d") #'project-x-delete-layout)
+    map)
+  "Keymap for project-x layout commands, bound under \\`C-x p l'.
+\\{project-x-layout-map}")
+
 ;;;###autoload
 (define-minor-mode project-x-mode
   "Minor mode adding session persistence and convenience features to project.el.
@@ -1121,6 +1259,8 @@ For tab-bar-project isolation, also enable `project-x-tabs-mode' (Emacs 28+)."
           (define-key project-prefix-map (kbd "r") #'project-x-rename-session))
         (unless (lookup-key project-prefix-map (kbd "d"))
           (define-key project-prefix-map (kbd "d") #'project-x-clear-session))
+        (unless (lookup-key project-prefix-map (kbd "l"))
+          (define-key project-prefix-map (kbd "l") project-x-layout-map))
         (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
         (advice-add 'project-forget-project :around #'project-x--handle-forget-project))
     ;; Turning mode OFF
@@ -1133,6 +1273,7 @@ For tab-bar-project isolation, also enable `project-x-tabs-mode' (Emacs 28+)."
     (define-key project-prefix-map (kbd "a") nil)
     (define-key project-prefix-map (kbd "r") nil)
     (define-key project-prefix-map (kbd "d") nil)
+    (define-key project-prefix-map (kbd "l") nil)
     ;; remove dynamic menu advice
     (advice-remove 'project-switch-project #'project-x--dynamic-switch-commands)
     (advice-remove 'project-forget-project #'project-x--handle-forget-project)
