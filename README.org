@@ -72,7 +72,8 @@ There are four main customization options right now:
     (setq project-x-local-identifier '("package.json" "mix.exs" "Project.toml" ".project"))
   #+END_SRC
 - =project-x-auto-save-delay=: Number of seconds of idle time before auto-saving the current project window configuration. Defaults to =nil= (autosave disabled). This requires =project-x-mode= to be turned on. The save is debounced: Emacs must be idle for this many seconds after a window or buffer change before the state is written.
-- =project-x-save-extra-buffers=: Boolean to control whether special non-file buffers (=magit-status=, =eshell=, =compilation=) are tracked. Defaults to =nil=. If toggled to =t=, these buffers will not be skipped during save/restore. If switched back to =nil=, existing extra buffers found in saved states will be safely ignored upon restoration.
+- =project-x-save-extra-buffers=: Boolean to control whether special non-file buffers (=magit-status=, =eshell=, =compilation=) are tracked. Defaults to =nil=.
+- =project-x-layout-persist-active=: Boolean controlling whether a projects *active* layout is remembered across Emacs restarts. Default is =t=: whichever layout you were last on, stays active next time you switch into that project. Set to =nil= if you want to always load ="default"= instead.
 
 ** Usage
 
@@ -108,7 +109,7 @@ To keep *several layouts* for the *same* project:
 3. Use =C-x p l l= (=project-x-switch-layout=) to jump between saved layouts for the current project. Whichever one you switch to becomes the *new active layout*.
 4. Use =C-x p l d= (=project-x-delete-layout=) to remove a layout you no longer need. The /last remaining/ layout for a project can't be deleted this way, use =C-x p d= to clear the whole session instead.
 
-Existing sessions saved /before/ this feature keep working as-is: they're just treated as the ~"default"~ layout the first time they're loaded.
+By default the layout you left a project on is what's restored the next time you load it (=project-x-layout-persist-active= is =t=). If you'd rather every project always start on the ~"default"~ layout, change =project-x-layout-persist-active= to =nil=.
 
 *** 'Local' projects
 To recognize 'local' projects with a root marker somewhere in the path, turn on =project-x-mode= OR run:
@@ -162,7 +163,7 @@ Contributions are welcome! Please:
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slowdown, please raise an issue.
 
 ** Changelog
-- /New in v0.3.1:/ Multiple named window layouts per project (=project-x-window-state-save-as=, =project-x-switch-layout=, =project-x-delete-layout=, bound under =C-x p l=).
+- /New in v0.3.1:/ Multiple named window layouts per project (=project-x-window-state-save-as=, =project-x-switch-layout=, =project-x-delete-layout=, bound under =C-x p l=), and =project-x-layout-persist-active= to control whether the active layout is *remembered* across restarts or always resets to =\"default\"=.
 - /New in v0.3.0:/ =project-x-tabs-mode=. Handles built-in =tab-bar-mode= actions during project switching, as well as context isolation for all =project.el= commands. Renaming a session via =C-x p r= now also renames the corresponding tab.
 - /New in v0.2.4:/ Added the custom toggle option =project-x-save-extra-buffers= to let users opt-out of saving or restoring special buffers (=magit=, =eshell=, =compilation=). Also added general optimisations for window restoration.
 - /New in v0.2.3:/ Replaced fixed-interval autosave with a debounced idle-timer (=project-x-auto-save-delay=). Added support for saving and restoring =magit-status=, =eshell=, and =compilation= buffers alongside regular file and =dired= buffers. =project-forget-project= now automatically removes session data.

@@ -100,6 +100,11 @@ If changed to nil, existing saved extra buffers are ignored during restoration."
   :type 'boolean
   :group 'project-x)
 
+(defcustom project-x-layout-persist-active t
+  "Whether a projects active layout is remembered across Emacs restarts."
+  :type 'boolean
+  :group 'project-x)
+
 (defvar project-x-window-alist nil
   "Alist of window configurations associated with known projects.")
 
@@ -129,7 +134,9 @@ If FILE is specified, read from it instead."
          (insert-file-contents (or file project-x-window-list-file))
          (condition-case nil
              (if-let ((win-state-alist (read (current-buffer))))
-                 (setq project-x-window-alist win-state-alist)
+                 (progn
+                   (setq project-x-window-alist win-state-alist)
+                   (project-x--reset-active-layouts))
                (message "Could not read %s" project-x-window-list-file))
            (error (message "Could not read %s" project-x-window-list-file))))))
 
@@ -193,6 +200,22 @@ Upgrades legacy single-layout entries to the multi-layout format on read."
   (and-let* ((entry (project-x--session-entry dir))
              (layouts (project-x--entry-layouts entry)))
     (seq-some (lambda (kv) (alist-get 'windows (cdr kv))) layouts)))
+
+(defun project-x--reset-active-layouts ()
+  "Reset every projects active layout to its default/first layout.
+Only works when `project-x-layout-persist-active' is nil.  Meant to be
+called right after `project-x-window-alist' is loaded from disk."
+  (unless project-x-layout-persist-active ; only when persist is off
+    (dolist (cell project-x-window-alist)
+      (let* ((entry (project-x--migrate-entry (cdr cell)))
+             (layouts (project-x--entry-layouts entry))
+             ;; prefer "default" layout otherwise fallback to whatever is first
+             (fallback (if (assoc "default" layouts #'equal)
+                           "default"
+                         (caar layouts))))
+        (when fallback
+          (setf (alist-get 'current-layout entry) fallback))
+        (setcdr cell entry))))) ;; persist migration + reset in one write
 
 (defun project-x--default-session-label (dir)
   "Return a sensible default label for DIR."
