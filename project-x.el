@@ -43,6 +43,7 @@
 
 (defvar project-prefix-map)
 (defvar project-switch-commands)
+(defvar project-x-mode)
 
 (declare-function project-prompt-project-dir "project")
 (declare-function project-buffers "project")
