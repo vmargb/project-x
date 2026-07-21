@@ -293,7 +293,7 @@ With optional prefix argument ARG, query for a project instead."
 ;; extra buffers are now properly guarded behind `project-x-save-extra-buffers'
 (defun project-x--buffer-session-data (buf)
   "Extract session data for BUF.
-Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignored."
+Returns (buffer-name . (:type TYPE :data ...)) or nil if should be ignored."
   (let ((name (buffer-name buf))
         (mode (buffer-local-value 'major-mode buf))
         (dir  (buffer-local-value 'default-directory buf)))
@@ -316,6 +316,12 @@ Returns (buffer-name . (:type TYPE :data ...)) or nil if buffer should be ignore
      ;; compilation
      ((and project-x-save-extra-buffers (eq mode 'compilation-mode))
       (cons name `(:type compilation :dir ,dir)))
+     ;; vterm
+     ((and project-x-save-extra-buffers (eq mode 'vterm-mode))
+      (cons name `(:type vterm :dir ,dir)))
+     ;; eat
+     ((and project-x-save-extra-buffers (eq mode 'eat-mode))
+      (cons name `(:type eat :dir ,dir)))
      ;; skip everything else by default
      (t nil))))
 
@@ -441,6 +447,23 @@ Returns (expected-name . buffer) or nil."
                   (setq default-directory (plist-get props :dir))
                   (insert ";; Compilation session restored.\n")
                   (current-buffer)))))
+       ((eq type 'vterm)
+        (when (and project-x-save-extra-buffers (fboundp 'vterm))
+          (cons buf-name
+                (save-window-excursion
+                  (let ((default-directory (plist-get props :dir)))
+                    (vterm buf-name)
+                    (get-buffer buf-name))))))
+       ((eq type 'eat)
+        (when (and project-x-save-extra-buffers (fboundp 'eat))
+          (cons buf-name
+                (save-window-excursion
+                  (let ((default-directory (plist-get props :dir)))
+                    (eat) ; takes 0-2 arguments
+                    ;; safely rename it so project-x can claim it
+                    ;; generate-new-buffer-name prevents crashes if the name is temporarily taken
+                    (rename-buffer (generate-new-buffer-name buf-name))
+                    (current-buffer))))))
        (t nil))))
    ;; format 2: Cons cell with string car AND string cdr (old v1: path . name)
    ((and (consp item) (stringp (car item)) (stringp (cdr item)))
@@ -686,7 +709,7 @@ This only takes effect when `kill-buffer' is called non-interactively"
     project-shell project-eshell project-dired project-compile
     project-find-regexp project-query-replace-regexp)
   "When `project-x-tabs-mode' is active, every command in this list is advised.
-with `default-directory' bound to the tabs root, regardless of the file you're on."
+with `default-directory' bound to the tabs root, regardless of current buffer."
   :type '(repeat function)
   :group 'project-x-tabs
   :set (lambda (sym val)
@@ -720,9 +743,9 @@ Each value is: ((dir-name . STR) (base-name . STR-OR-NIL) (unique-name . STR))")
                 (split-string dir "/"))))))
 
 (defun project-x--tab-unique-path-elements (dir1 dir2 &optional base1 base2)
-  "Return the differing tail elements of DIR1 and DIR2 as a cons (ELS1 . ELS2).
-BASE1 / BASE2 are optional session labels.  When a custom label differs from the
-physical directory name it is prepended so label-based conflicts are also resolved"
+  "Return the differing tail parts of DIR1 and DIR2 as a cons (ELS1 . ELS2).
+BASE1 / BASE2 are optional session labels.  When session labels differ from the
+actual directory name it's prepended so label-based conflicts are also resolved"
   (let ((els1 (project-x--tab-path-elements dir1))
         (els2 (project-x--tab-path-elements dir2)))
     (when (and base1 (not (equal base1 (car els1)))) (push base1 els1))
@@ -938,8 +961,7 @@ For new tabs ORIG-FN is called which triggers full session restore."
       nil)))
 
 (defun project-x--tab-kill-buffers-a (orig-fn &rest args)
-  "Close the project tab if the user confirms `project-kill-buffers'.
-If the user cancels it then the tab is left untouched.
+  "Close tab if the user confirms ORIG-FN: `project-kill-buffers' with ARGS.
 All other bindings (tabs, curr-tab, root) are resolved AFTER the kill."
   (when-let* (((apply orig-fn args))
               (tabs     (funcall tab-bar-tabs-function))
@@ -964,6 +986,7 @@ All other bindings (tabs, curr-tab, root) are resolved AFTER the kill."
 
 (defun project-x--tab-project-current-a (orig-fn &rest args)
   "Switch tabs when a project is selected interactively.
+Where ORIG-FN passed with ARGS is `project-current'.
 When the user is prompted for a project and they choose one
 that belongs to a different tab, switch to that tab."
   (let ((proj (apply orig-fn args)))
@@ -977,21 +1000,20 @@ that belongs to a different tab, switch to that tab."
     proj))
 
 (defun project-x--tab-bury-buffer-a (fn &optional buffer)
-  "Advice for `kill-buffer': bury BUFFER when it is visible in another tab.
-Only intercepts non-interactive calls (so explicit \\[kill-buffer] always kills).
-Requires `tab-bar-get-buffer-tab' which is available in Emacs 29+."
+  "Advice for FN: `kill-buffer': bury BUFFER when it is visible in another tab.
+Only intercepts non-interactive calls (so explicit `kill-buffer' always kills)."
   (if (and project-x-tab-bury-buffer
            (not (called-interactively-p 'any))
            (or (null buffer) (eq (get-buffer buffer) (current-buffer)))
-           (fboundp 'tab-bar-get-buffer-tab)
+           (fboundp 'tab-bar-get-buffer-tab) ; requires Emacs 29+
            (tab-bar-get-buffer-tab buffer t t t))
       (progn
-        (message "Buffer visible in another tab — burying instead of killing.")
+        (message "Buffer visible in another tab, burying instead of killing.")
         (bury-buffer buffer))
     (funcall fn buffer)))
 
 (defun project-x--tab-find-file-a (orig-fn &rest args)
-  "Advice for `find-file': switch to the opened file's project tab.
+  "Advice for ORIG-FN w/ ARGS: `find-file': switch to opened files project tab.
 Only active when `project-x-tab-find-file-integration' is non-nil."
   (when-let* ((file (car args))
               (proj (project-current nil (file-name-directory
@@ -1001,18 +1023,20 @@ Only active when `project-x-tab-find-file-integration' is non-nil."
       (project-switch-project root)))
   (apply orig-fn args))
 
+; respects `project-x-tab-kill-buffers-on-close'
 (defun project-x--tab-pre-close-hook (tab _last-tab-p)
-  "Hook for `tab-bar-tab-pre-close-functions' optionally kill project buffers.
-Respects `project-x-tab-kill-buffers-on-close'."
+  "Hook for `tab-bar-tab-pre-close-functions' .
+optionally kill project buffers for TAB on close."
   (when-let* ((killp project-x-tab-kill-buffers-on-close)
               (root  (project-x--tab-get-root tab))
               (proj  (project-current nil root))
               ((string= (expand-file-name (project-root proj))
                         (expand-file-name root))))
-    (project-kill-buffers (not (equal killp "ask")) proj)))
+    (let ((default-directory root))
+      (project-kill-buffers (not (equal killp "ask"))))))
 
 (defun project-x--tab-override-a (orig-fn &rest args)
-  "Run ORIG-FN with `default-directory' bound to the current tab's root."
+  "Run ORIG-FN with `default-directory' on ARGS, bound to the current tab root."
   (let ((default-directory (or (project-x--tab-get-root) default-directory)))
     (apply orig-fn args)))
 
@@ -1172,8 +1196,9 @@ If the marker already exists, simply re-registers the project in memory."
 
 ;; Context-aware restore session advice to project.el
 ;; -------------------------------------
+
 (defun project-x--dynamic-switch-commands (orig-fun dir &rest args)
-  "Dynamically include 'Restore windows' to ARGS in ORIG-FUN if a saved state exists for DIR."
+  "Add `Restore-windows' to ARGS in ORIG-FUN if saved state exists for DIR."
   (project-x--ensure-window-state-loaded)
   (let* ((target-dir (file-name-as-directory (expand-file-name dir)))
          (has-session (project-x--session-has-window-state-p target-dir))
@@ -1236,7 +1261,7 @@ Silently skips projects where the directory cannot be resolved like TRAMP"
 ;; Sync with project-forget-project
 ;; -------------------------------------
 (defun project-x--handle-forget-project (orig-fun project &rest args)
-  "Remove session data when PROJECT is forgotten.
+  "Remove session data when using ORIG-FUN w/ ARGS: `project-forget-project'.
 PROJECT can be either a project object or a directory string."
   (let* ((dir (if (stringp project) project (project-root project)))
          (key (project-x--project-root-key dir)))
