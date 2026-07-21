@@ -22,7 +22,7 @@ jobs:
       env:
         LOCAL_REPO: ${{ github.workspace }}
         # RECIPE is your recipe as written for MELPA:
-        RECIPE: (project-x :fetcher github :repo "vmargb/arrow.el")
+        RECIPE: (project-x :fetcher github :repo "vmargb/project-x")
         # set this to true if warnings should be treated as errors:
         WARN_IS_ERROR: false
         # set this to false (or remove it) if the package isn't on MELPA:
