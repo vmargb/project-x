@@ -560,10 +560,10 @@ dedicated tab before restoring, so the session lands in the right tab."
 ;;;###autoload
 (defun project-x-windows ()
   "Restore the last saved window state of the current project.
+When `project-x-tabs-mode' is active, restores the tab's bound project
 Falls back to Dired at the project root when no session exists."
   (interactive)
-  (if-let* ((project (project-current nil))
-            (dir (project-root project)))
+  (if-let* ((dir (project-x--target-project-dir nil)))
       (pcase (project-x--window-state-restore dir)
         ('restored (message "Restored project state for %s" dir))
         ('stale    (dired dir)
