@@ -208,9 +208,12 @@ called right after `project-x-window-alist' is loaded from disk."
   entry)
 
 (defun project-x--current-project-root ()
-  "Return the current project root or nil."
-  (when-let* ((project (project-current nil)))
-    (project-root project)))
+  "Return the current project root or nil.
+When `project-x-tabs-mode' is active, prefers the tab's bound root over
+the current buffer's project (mirrors `project-x-window-state-save').
+Used by `project-x-rename-session', `project-x-switch-layout', and
+`project-x-delete-layout' via `project-x--current-project-root-or-error'."
+  (project-x--target-project-dir nil))
 
 (defun project-x--current-project-root-or-error ()
   "Return the current project root, signaling an error when absent."
@@ -249,9 +252,7 @@ When `project-x-tabs-mode' is active, the corresponding tab is also renamed."
   "Delete the saved session for the current project.
 With optional prefix argument ARG, query for a project instead."
   (interactive "P")
-  (when-let* ((dir (cond (arg (project-prompt-project-dir))
-                         ((project-current)
-                          (project-root (project-current)))))
+  (when-let* ((dir (project-x--target-project-dir arg))
               (key (project-x--project-root-key dir)))
     (project-x--ensure-window-state-loaded)
     (if (assoc key project-x-window-alist #'equal)

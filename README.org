@@ -15,7 +15,7 @@ So:
 - =project-forget-project= now automatically clears session data as well as removing the project
 
 #+BEGIN_QUOTE
-As of /v0.3.0/, =project-x= includes =project-x-tabs-mode=. Which substitutes the need to pair this package with other =tab-bar-mode= packages like [[https://codeberg.org/mclear-tools/tabspaces][tabspaces]] or [[https://github.com/abougouffa/one-tab-per-project][one-tab-per-project (otpp)]], allowing for an *all-in-one* solution between projects, sessions *and* tabs. Though, you can also choose to keep this off and continue using the above solutions.
+As of /v0.3.0/, =project-x= includes =project-x-tabs-mode=. Which replaces other =tab-bar-mode= packages like [[https://codeberg.org/mclear-tools/tabspaces][tabspaces]] or [[https://github.com/abougouffa/one-tab-per-project][one-tab-per-project]], as an *all-in-one* solution. Using ours provides a few extra benefits such as full context isolation with not just =project.el=, but also =project-x= commands. However, you can still choose to keep this off and continue using the above solutions(or none).
 #+END_QUOTE
 
 + Enhanced project switching: When you switch projects you switch window configurations too, (re)opening files as needed.
@@ -138,7 +138,7 @@ Project-x uses window configurations under the hood. However, it has a few advan
 If you think in terms of projects, you may find it more convenient to use =project-x= through the project dispatch menu (=C-x p p=) to continue working from where you left off. This is a helper library to define and handle projects, not an overarching modification to your Emacs usage pattern. If you want full tab isolation, =project-x-tabs-mode= is now built in.
 
 **** ...Tabspaces/one-tab-per-project?
-=project-x-tabs-mode= is inspired by and borrows from [[https://github.com/abougouffa/one-tab-per-project][otpp]]. The key improvement with using it inside =project-x= instead is that your renamed session labels and tab names are a single source of truth, renaming one renames the other. However, if you want a standalone tab package decoupled from project-x with more features, =otpp.el= remains an excellent option.
+=project-x-tabs-mode= is heavily inspired by and borrows from [[https://github.com/abougouffa/one-tab-per-project][otpp.el]]. The key improvement with using it inside =project-x= instead is that your renamed session labels and tab names are synced, renaming one renames the other. In addition, restoring a session with =project-x-windows= will now always use the tab's root project, rather than the buffers. However, if you still want a standalone tab package decoupled from =project-x= with more features, =otpp.el= remains an excellent option.
 
 **** ...Burly?
 [[https://github.com/alphapapa/burly.el][Burly]] provides a more universal method to save and restore frames and window configurations as Emacs bookmarks (thus persistent across sessions) that is not limited to the project metaphor. If you are looking for this feature but in a more general Emacs context you might be better served by it.
