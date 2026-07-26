@@ -45,9 +45,6 @@
 (defvar project-switch-commands)
 (defvar project-x-mode)
 
-(declare-function project-prompt-project-dir "project")
-(declare-function project-buffers "project")
-
 (defgroup project-x nil
   "Convenience features for the Project library."
   :group 'project)

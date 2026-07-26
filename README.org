@@ -31,12 +31,13 @@ As of /v0.3.0/, =project-x= includes =project-x-tabs-mode=. Which replaces other
 
 ** Setup and customization
 
-*** Emacs 29+ (Recommended)
-Starting with Emacs 29, you can install packages directly with =package-vc-install=:
+*** Installation
+
+You can install =project-x= from [[https://melpa.org/#/project-x][MELPA]]:
 
 #+begin_src emacs-lisp
   (use-package project-x
-    :vc (:url "https://github.com/vmargb/project-x")
+    :ensure t
     :after project
     :config
     ;; auto-save project state after 5 seconds of idle time
@@ -53,7 +54,7 @@ If you prefer not to use the opinionated =project-x-mode=, you can selectively e
 
 #+begin_src emacs-lisp
   (use-package project-x
-    :vc (:url "https://github.com/vmargb/project-x")
+    :ensure t
     :after project
     :config
     (add-hook 'project-find-functions #'project-x-try-local 90)
