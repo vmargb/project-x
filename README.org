@@ -3,8 +3,6 @@
 #+STARTUP: nofold
 
 ** What problem does this solve? (project vs session management)
-Having to learn two different groups of commands for doing the same thing.
-
 The traditional Emacs workflow is to use =project.el= or =projectile= for *project-management*, and a separate package for *session-management*, which saves and restores your workspace. While these packages can do much more, many people use them only to save and restore a project as they left it. That split forces you to remember two different groups of commands.
 
 =Project-x= collapses that split: every project is a session, and restoring a session is identical to restoring a project. That means you keep the same =project.el= keybindings you're already familiar with, while =Project-x= transparently handles saving, restoring, and syncing the project’s session state.
@@ -127,6 +125,7 @@ All =project.el= features should work as expected (Now works with =project-vc-ex
 - This is currently limited to storing only the current frame configuration.
 - The only state saved is your project files, =dired= buffers, and (if enabled via =project-x-save-extra-buffers=) =magit-status=, =eshell=, and =compilation= buffers. No minor modes, registers, or other special buffers are recorded. For complete recall, look into the built-in Desktop library.
 - If you use multiple Emacs instances, project states saved to disk can get overwritten.
+- Terminal buffers are restored without their scroll history and state. At the moment, the only way to solve this is to use =tmux=.
 
 ** Alternatives
 *** How does this compare with...
@@ -141,7 +140,7 @@ If you think in terms of projects, you may find it more convenient to use =proje
 **** ...Tabspaces/one-tab-per-project?
 =project-x-tabs-mode= is heavily inspired by and borrows from [[https://github.com/abougouffa/one-tab-per-project][otpp.el]]. The key improvement with using it inside =project-x= instead is that your renamed session labels and tab names are synced, renaming one renames the other. In addition, restoring a session with =project-x-windows= will now always use the tab's root project, rather than the buffers. However, if you still want a standalone tab package decoupled from =project-x= with more features, =otpp.el= remains an excellent option.
 
-**** ...Burly?
+**** ...Burly? Activities?
 [[https://github.com/alphapapa/burly.el][Burly]] provides a more universal method to save and restore frames and window configurations as Emacs bookmarks (thus persistent across sessions) that is not limited to the project metaphor. If you are looking for this feature but in a more general Emacs context you might be better served by it.
 
 **** ...the Desktop library?
@@ -166,7 +165,7 @@ Contributions are welcome! Please:
 ** Changelog
 - /New in v0.3.1:/ Multiple named window layouts per project (=project-x-window-state-save-as=, =project-x-switch-layout=, =project-x-delete-layout=, bound under =C-x p l=), and =project-x-layout-persist-active= to control whether the active layout is *remembered* across restarts or always resets to ="default"=.
 - /New in v0.3.0:/ =project-x-tabs-mode=. Handles built-in =tab-bar-mode= actions during project switching, as well as context isolation for all =project.el= commands. Renaming a session via =C-x p r= now also renames the corresponding tab.
-- /New in v0.2.4:/ Added the custom toggle option =project-x-save-extra-buffers= to let users opt-out of saving or restoring special buffers (=magit=, =eshell=, =compilation=). Also added general optimisations for window restoration.
+- /New in v0.2.4:/ =project-x-save-extra-buffers= to let users opt-out of saving or restoring special buffers (=magit=, =eshell=, =compilation=). Added general optimisations and fixed an error caused by projects on an unreachable host.
 - /New in v0.2.3:/ Replaced fixed-interval autosave with a debounced idle-timer (=project-x-auto-save-delay=). Added support for saving and restoring =magit-status=, =eshell=, and =compilation= buffers alongside regular file and =dired= buffers. =project-forget-project= now automatically removes session data.
 - /New in v0.2.2:/ Fixed *major* bug where Emacs's =uniquify= prevents =project-switch-project= from correctly restoring sessions. Fixed identical directory and buffer name causing race conditions.
 - /New in v0.2.1:/ =project-prompter= for cleaner format & =project-x-rename-session= to rename a session.
