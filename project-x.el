@@ -581,6 +581,9 @@ Falls back to Dired at the project root when no session exists."
                    (message "No saved session for this project, opened project root in Dired instead.")))
     (message "No current project")))
 
+;; =================================================
+;; Layouts
+
 ;;;###autoload
 (defun project-x-switch-layout (name)
   "Switch the current project to its saved layout NAME.
@@ -624,6 +627,38 @@ Refuses to delete a projects only remaining layout"
       (project-x--set-session-entry dir entry)
       (project-x--window-state-write)
       (message "Deleted layout %S for %s" name dir))))
+
+(defun project-x--cycle-layout (direction)
+  "Cycle through saved project layouts.
+DIRECTION is 1 for next, -1 for previous."
+  (let* ((dir (project-x--current-project-root-or-error))
+         (names (project-x--layout-names dir))
+         (num-layouts (length names))) ; get number of layouts for current project
+    (when (< num-layouts 2)
+      (user-error "Not enough saved layouts to cycle"))
+    (let* ((entry (project-x--session-entry dir))
+           (current (project-x--entry-current-layout entry)) ; get current active layout
+           ;; find where we are in the list from current, default to 0
+           (current-idx (or (cl-position current names :test #'equal) 0))
+           (next-idx (mod (+ current-idx direction) num-layouts)) ; mod to wrap-around
+           (next-name (nth next-idx names))) ; get correct layout name
+      (pcase (project-x--window-state-restore dir next-name) ; restore that name
+        ('restored (message "Switched to layout %S (%d/%d) for %s"
+                            next-name (1+ next-idx) num-layouts dir))
+        ('stale    (message "Layout %S has no live buffers left to restore." next-name))
+        (_         (message "Failed to switch to layout %S." next-name))))))
+
+;;;###autoload
+(defun project-x-next-layout ()
+  "Switch to the next saved layout for the current project."
+  (interactive)
+  (project-x--cycle-layout 1))
+
+;;;###autoload
+(defun project-x-previous-layout ()
+  "Switch to the previous saved layout for the current project."
+  (interactive)
+  (project-x--cycle-layout -1))
 
 
 ;; Tab for each project integration (requires Emacs 28+, tab-bar-mode)
@@ -1259,6 +1294,8 @@ PROJECT can be either a project object or a directory string."
     (define-key map (kbd "s") #'project-x-window-state-save-as)
     (define-key map (kbd "l") #'project-x-switch-layout)
     (define-key map (kbd "d") #'project-x-delete-layout)
+    (define-key map (kbd "n") #'project-x-next-layout)
+    (define-key map (kbd "p") #'project-x-previous-layout)
     map)
   "Keymap for project-x layout commands, bound under \\`C-x p l'.
 \\{project-x-layout-map}")
