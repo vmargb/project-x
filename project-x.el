@@ -293,6 +293,9 @@ Returns (buffer-name . (:type TYPE :data ...)) or nil if should be ignored."
      ;; eat
      ((and project-x-save-extra-buffers (eq mode 'eat-mode))
       (cons name `(:type eat :dir ,dir)))
+     ;; ghostel
+     ((and project-x-save-extra-buffers (eq mode 'ghostel-mode))
+      (cons name `(:type ghostel :dir ,dir)))
      ;; skip everything else by default
      (t nil))))
 
@@ -433,6 +436,14 @@ Returns (expected-name . buffer) or nil."
                     (eat) ; takes 0-2 arguments
                     ;; safely rename it so project-x can claim it
                     ;; generate-new-buffer-name prevents crashes if the name is temporarily taken
+                    (rename-buffer (generate-new-buffer-name buf-name))
+                    (current-buffer))))))
+       ((eq type 'ghostel)
+        (when (and project-x-save-extra-buffers (fboundp 'ghostel))
+          (cons buf-name
+                (save-window-excursion
+                  (let ((default-directory (plist-get props :dir)))
+                    (ghostel)
                     (rename-buffer (generate-new-buffer-name buf-name))
                     (current-buffer))))))
        (t nil))))
