@@ -140,14 +140,14 @@ If you think in terms of projects, you may find it more convenient to use =proje
 **** ...Tabspaces/one-tab-per-project?
 =project-x-tabs-mode= is heavily inspired by and borrows from [[https://github.com/abougouffa/one-tab-per-project][otpp.el]]. The key improvement with using it inside =project-x= instead is that your renamed session labels and tab names are synced, renaming one renames the other. In addition, restoring a session with =project-x-windows= will now always use the tab's root project, rather than the buffers. However, if you still want a standalone tab package decoupled from =project-x= with more features, =otpp.el= remains an excellent option.
 
-**** ...Burly? Activities?
+**** ...Burly? ...Activities?
 [[https://github.com/alphapapa/burly.el][Burly]] provides a more universal method to save and restore frames and window configurations as Emacs bookmarks (thus persistent across sessions) that is not limited to the project metaphor. If you are looking for this feature but in a more general Emacs context you might be better served by it.
 
 **** ...the Desktop library?
 See [[id:c1326cad-5dd9-4789-8e5e-74f5b012b546][Limitations]]. Desktop restores your entire session, this is a much diminished version of the same for individual projects. But desktop being an all-or-nothing affair (without extensive customization) is also a disadvantage. Here each project gets its own desktop state.
 
 **** ..Projectile?
-=project.el= is built-in and fast, and =project-x= is only a small addition to it. As far as I know, Projectile does not natively offer the ability to save and restore your project sessions (including window configurations) out of the box.
+=Projectile= now also supports project [[https://docs.projectile.mx/projectile/sessions.html][sessions]]. The main difference is that the =project.el= workflow is much lighter and already built-in, so existing commands you already know are session-aware, whereas Projectile provides its own framework with its own command set. Projectile offers a lot more features beyond what project.el can do, but if all you're looking for is *session persistence*, then you don't have to switch to an entirely new framework, project-x is just a small addition to what you already have.
 
 ** Maintenance Notice                                                :UPDATED:
 As of 2026, this package is maintained by [[https://github.com/vmargb][@vmargb]].
