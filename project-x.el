@@ -75,6 +75,11 @@ If changed to nil, existing saved extra buffers are ignored during restoration."
   :type 'boolean
   :group 'project-x)
 
+(defcustom project-x-restore-last-project-on-startup nil
+  "Whether to automatically restore the last active project when Emacs starts."
+  :type 'boolean
+  :group 'project-x)
+
 (defvar project-x-window-alist nil
   "Alist of window configurations associated with known projects.")
 
@@ -89,12 +94,16 @@ If changed to nil, existing saved extra buffers are ignored during restoration."
 If FILE is specified, write to it instead."
   (when project-x-window-alist
     (require 'pp)
+    ;; track the last active project right before writing to disk
+    (when-let ((curr-root (project-x--current-project-root)))
+      (setf (alist-get '*last-active-project* project-x-window-alist nil nil #'equal) curr-root))
     (unless file (make-directory (file-name-directory project-x-window-list-file) t))
     (with-temp-file (or file project-x-window-list-file)
       (insert ";;; -*- lisp-data -*-\n")
       (let ((print-level nil) (print-length nil))
         (pp project-x-window-alist (current-buffer))))
     (message "Wrote project window state to %s" (or file project-x-window-list-file))))
+
 
 (defun project-x--window-state-read (&optional file)
   "Read project window states from `project-x-window-list-file'.
@@ -109,6 +118,7 @@ If FILE is specified, read from it instead."
                    (project-x--reset-active-layouts))
                (message "Could not read %s" project-x-window-list-file))
            (error (message "Could not read %s" project-x-window-list-file))))))
+
 
 ;; helper to normalize the path for a project consistently
 (defun project-x--project-root-key (dir)
@@ -580,6 +590,26 @@ Falls back to Dired at the project root when no session exists."
         (_         (dired dir)
                    (message "No saved session for this project, opened project root in Dired instead.")))
     (message "No current project")))
+
+;;;###autoload
+(defun project-x-restore-last-project ()
+  "Switch to the last project that was active when Emacs exited."
+  (interactive)
+  (project-x--ensure-window-state-loaded)
+  (if-let ((last-dir (alist-get '*last-active-project* project-x-window-alist nil nil #'equal)))
+      (if (file-exists-p last-dir)
+          (progn
+            (message "Restoring last active project: %s" last-dir)
+            (project-x-window-state-load last-dir)) ; existing restore to handle the rest
+        (message "Last active project directory no longer exists: %s" last-dir))
+    (message "No last active project found.")))
+
+; hook
+(defun project-x--maybe-restore-last-project ()
+  "Restore the last active project if the startup option is enabled."
+  (when (and project-x-mode
+             project-x-restore-last-project-on-startup)
+    (project-x-restore-last-project)))
 
 ;; =================================================
 ;; Layouts
@@ -1310,10 +1340,11 @@ For tab-bar-project isolation, also enable `project-x-tabs-mode' (Emacs 28+)."
   (if project-x-mode
       ;; Turning the mode ON
       (progn
-        (add-hook 'project-find-functions #'project-x-try-local 90)
-        (add-hook 'kill-emacs-hook        #'project-x--window-state-write)
+        (add-hook 'project-find-functions           #'project-x-try-local 90)
+        (add-hook 'kill-emacs-hook                  #'project-x--window-state-write)
         (add-hook 'window-configuration-change-hook #'project-x--schedule-auto-save)
         (add-hook 'kill-buffer-hook                 #'project-x--schedule-auto-save)
+        (add-hook 'emacs-startup-hook               #'project-x--maybe-restore-last-project)
         (project-x--window-state-read)
         ;; Keybindings (safe registration)
         (unless (lookup-key project-prefix-map (kbd "w"))
@@ -1331,10 +1362,11 @@ For tab-bar-project isolation, also enable `project-x-tabs-mode' (Emacs 28+)."
         (advice-add 'project-switch-project :around #'project-x--dynamic-switch-commands)
         (advice-add 'project-forget-project :around #'project-x--handle-forget-project))
     ;; Turning mode OFF
-    (remove-hook 'project-find-functions #'project-x-try-local)
-    (remove-hook 'kill-emacs-hook        #'project-x--window-state-write)
+    (remove-hook 'project-find-functions           #'project-x-try-local)
+    (remove-hook 'kill-emacs-hook                  #'project-x--window-state-write)
     (remove-hook 'window-configuration-change-hook #'project-x--schedule-auto-save)
     (remove-hook 'kill-buffer-hook                 #'project-x--schedule-auto-save)
+    (remove-hook 'emacs-startup-hook               #'project-x--maybe-restore-last-project)
     (define-key project-prefix-map (kbd "w") nil)
     (define-key project-prefix-map (kbd "j") nil)
     (define-key project-prefix-map (kbd "a") nil)

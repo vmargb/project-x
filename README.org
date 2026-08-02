@@ -42,6 +42,8 @@ You can install =project-x= from [[https://melpa.org/#/project-x][MELPA]]:
     (setq project-x-auto-save-delay 5) ; nil to disable autosave
     ;; use the custom prompter that shows session labels (optional)
     (setq project-prompter #'project-x--project-prompt)
+    ;; automatically restore the last project on startup (optional)
+    ;;(setq project-x-restore-last-project-on-startup t)
     (project-x-mode 1)
     ;; tab-bar-mode integration (optional)
     (project-x-tabs-mode 1))
@@ -63,7 +65,7 @@ If you prefer not to use the opinionated =project-x-mode=, you can selectively e
 #+end_src
 
 *** Customization Options
-There are four main customization options right now:
+There are five main customization options:
 - =project-x-window-list-file=: File to store project window configurations. Defaults to your emacs user directory.
 - =project-x-local-identifier=: String matched against file names to decide if a directory (or some parent thereof) is a project. Defaults to =.project=. You can also supply a list of strings.
   For example, Node projects use =package.json=, Elixir uses =mix.exs=, and Julia uses =Project.toml=. You can identify all of these as project roots by setting:
@@ -73,6 +75,7 @@ There are four main customization options right now:
 - =project-x-auto-save-delay=: Number of seconds of idle time before auto-saving the current project window configuration. Defaults to =nil= (autosave disabled). This requires =project-x-mode= to be turned on. The save is debounced: Emacs must be idle for this many seconds after a window or buffer change before the state is written.
 - =project-x-save-extra-buffers=: Boolean to control whether special non-file buffers (=magit-status=, =eshell=, =compilation=) are tracked. Defaults to =nil=.
 - =project-x-layout-persist-active=: Boolean controlling whether a projects *active* layout is remembered across Emacs restarts. Default is =t=: whichever layout you were last on, stays active next time you switch into that project. Set to =nil= if you want to always load ="default"= instead.
+- =project-x-restore-last-project-on-startup=: Boolean controlling whether Emacs will automatically open and switch to the project you were last working on when you exited. Defaults to =nil=.
 
 ** Usage
 
@@ -163,6 +166,7 @@ Contributions are welcome! Please:
 =project-x= creates entries containing project state information for a project in the data structure it uses (an associative list) only when you save its state. Thus it should remain fast even if you have thousands of projects so long as you actively work on a few at a time. If you experience slowdown, please raise an issue.
 
 ** Changelog
+- /New in v0.3.2:/ Added =project-x-restore-last-project= to optionally continue from the last active project where you left off. Added extra terminal support and you can now cycle/next/previous through project layouts.
 - /New in v0.3.1:/ Multiple named window layouts per project (=project-x-window-state-save-as=, =project-x-switch-layout=, =project-x-delete-layout=, bound under =C-x p l=), and =project-x-layout-persist-active= to control whether the active layout is *remembered* across restarts or always resets to ="default"=.
 - /New in v0.3.0:/ =project-x-tabs-mode=. Handles built-in =tab-bar-mode= actions during project switching, as well as context isolation for all =project.el= commands. Renaming a session via =C-x p r= now also renames the corresponding tab.
 - /New in v0.2.4:/ =project-x-save-extra-buffers= to let users opt-out of saving or restoring special buffers (=magit=, =eshell=, =compilation=). Added general optimisations and fixed an error caused by projects on an unreachable host.
