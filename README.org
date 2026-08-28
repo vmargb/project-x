@@ -3,9 +3,9 @@
 #+STARTUP: nofold
 
 ** What problem does this solve? (project vs session management)
-The traditional Emacs workflow is to use =project.el= or =projectile= for *project-management*, and a separate package for *session-management*, which saves and restores your workspace. While these packages can do much more, many people use them only to save and restore a project as they left it. That split forces you to remember two different groups of commands.
+The traditional Emacs workflow is to use =project.el= or =projectile= for *project-management*, and a different package for *session-management*, which saves and restores your workspace. While these packages can do much more, many use them only to save and restore a project as they left it. That split forces you to remember two different groups of commands.
 
-=Project-x= collapses that split: every project is a session, and restoring a session is identical to restoring a project. That means you keep the same =project.el= keybindings you're already familiar with, while =Project-x= transparently handles saving, restoring, and syncing the project’s session state.
+=Project-x= collapses that split: every project is a session, and restoring a session is identical to restoring a project. You keep the same =project.el= keybindings you're already familiar with, while =Project-x= transparently handles saving, restoring, and syncing the project’s session state.
 
 So:
 - =project-switch-project= now also switches sessions

@@ -95,7 +95,7 @@ If FILE is specified, write to it instead."
   (when project-x-window-alist
     (require 'pp)
     ;; track the last active project right before writing to disk
-    (when-let ((curr-root (project-x--current-project-root)))
+    (when-let* ((curr-root (project-x--current-project-root)))
       (setf (alist-get '*last-active-project* project-x-window-alist nil nil #'equal) curr-root))
     (unless file (make-directory (file-name-directory project-x-window-list-file) t))
     (with-temp-file (or file project-x-window-list-file)
@@ -112,7 +112,7 @@ If FILE is specified, read from it instead."
        (with-temp-buffer
          (insert-file-contents (or file project-x-window-list-file))
          (condition-case nil
-             (if-let ((win-state-alist (read (current-buffer))))
+             (if-let* ((win-state-alist (read (current-buffer))))
                  (progn
                    (setq project-x-window-alist win-state-alist)
                    (project-x--reset-active-layouts))
@@ -320,7 +320,7 @@ active layout."
          (buffer-data nil))
     ;; collect session data for all open project buffers
     (dolist (buf (project-buffers (project-current)))
-      (when-let ((data (project-x--buffer-session-data buf)))
+      (when-let* ((data (project-x--buffer-session-data buf)))
         (push data buffer-data)))
     (setf (alist-get layout-name layouts nil nil #'equal)
           (list (cons 'buffers buffer-data)
@@ -500,7 +500,7 @@ layout for DIR on success."
               (let ((expected (car pair))
                     (buf      (cdr pair)))
                 (unless (string= (buffer-name buf) expected)
-                  (when-let ((squatter (get-buffer expected)))
+                  (when-let* ((squatter (get-buffer expected)))
                     (let ((tmp (generate-new-buffer-name
                                 (concat " *px-tmp-" expected "*"))))
                       (push (cons squatter (buffer-name squatter)) squatter-renames)
@@ -596,7 +596,7 @@ Falls back to Dired at the project root when no session exists."
   "Switch to the last project that was active when Emacs exited."
   (interactive)
   (project-x--ensure-window-state-loaded)
-  (if-let ((last-dir (alist-get '*last-active-project* project-x-window-alist nil nil #'equal)))
+  (if-let* ((last-dir (alist-get '*last-active-project* project-x-window-alist nil nil #'equal)))
       (if (file-exists-p last-dir)
           (progn
             (message "Restoring last active project: %s" last-dir)
@@ -857,7 +857,7 @@ instead the directory name if no custom label has been set yet."
   "Remove map entries from projects that no longer have an open tab."
   (let ((live-dirs (delq nil
                          (mapcar (lambda (tab)
-                                   (when-let ((r (project-x--tab-get-root tab)))
+                                   (when-let* ((r (project-x--tab-get-root tab)))
                                      (expand-file-name r)))
                                  (funcall tab-bar-tabs-function)))))
     (maphash (lambda (dir _)
@@ -891,7 +891,7 @@ instead the directory name if no custom label has been set yet."
   "Return a list of tabs where the root matches DIR."
   (let ((target (expand-file-name dir)))
     (seq-filter (lambda (tab)
-                  (when-let ((root (project-x--tab-get-root tab)))
+                  (when-let* ((root (project-x--tab-get-root tab)))
                     (string= (expand-file-name root) target)))
                 (funcall tab-bar-tabs-function))))
 
@@ -925,7 +925,7 @@ Called from `project-x-rename-session' to keep tab names in sync."
         (setcdr (assq 'base-name entry) label)
       ;; edge case: tabs mode was just enabled and map entry doesn't exist yet
       (project-x--tab-name-register expanded)
-      (when-let ((e (gethash expanded project-x--tab-name-map)))
+      (when-let* ((e (gethash expanded project-x--tab-name-map)))
         (setcdr (assq 'base-name e) label)))
     (project-x--tab-update-names)))
 
@@ -935,7 +935,7 @@ Called from `project-x-rename-session' to keep tab names in sync."
 (defun project-x--tab-select-or-create (dir)
   "Select the existing tab for project DIR or create a new one.
 Returns t if a new tab was created, nil if an existing one was selected."
-  (if-let ((tab (car (project-x--tab-find-by-root dir))))
+  (if-let* ((tab (car (project-x--tab-find-by-root dir))))
       (prog1 nil
         (tab-bar-select-tab (1+ (tab-bar--tab-index tab))))
     (tab-bar-new-tab)
@@ -1024,7 +1024,7 @@ All other bindings (tabs, curr-tab, root) are resolved AFTER the kill."
       (let ((default-name (if (functionp project-x-default-tab-name)
                               (funcall project-x-default-tab-name)
                             project-x-default-tab-name)))
-        (when-let ((slot (assq project-x--tab-root-attr curr-tab)))
+        (when-let* ((slot (assq project-x--tab-root-attr curr-tab)))
           (setcdr slot nil))
         (setcdr (assq 'name curr-tab) default-name)
         (setcdr (assq 'explicit-name curr-tab) 'project-x-def)))
@@ -1162,7 +1162,7 @@ window layouts, or when you created a tab independently of project switching."
         (add-hook 'server-after-make-frame-hook     #'project-x--tab-set-default-name)
         ;; seed the name map from any tabs that already have a root dir set
         (dolist (tab (funcall tab-bar-tabs-function))
-          (when-let ((root (project-x--tab-get-root tab)))
+          (when-let* ((root (project-x--tab-get-root tab)))
             (project-x--tab-name-register root)))
         (project-x--tab-update-names)
         (project-x--tab-set-default-name))
@@ -1235,7 +1235,7 @@ If the marker already exists, simply re-registers the project in memory."
       (with-temp-buffer (write-file marker-file))
       (message "Created project marker '%s' in %s" marker-name dir))
     ;; always attempt to register the project with project.el
-    (if-let ((project (project-current nil dir)))
+    (if-let* ((project (project-current nil dir)))
         (progn
           (project-remember-project project)
           (message "Registered project at %s" dir))
@@ -1276,7 +1276,7 @@ If the marker already exists, simply re-registers the project in memory."
 
 (defun project-x--auto-save-current ()
   "Auto-save the current project if it has open buffers."
-  (when-let ((proj (project-current nil))
+  (when-let* ((proj (project-current nil))
              (bufs (project-buffers proj)))
     (when bufs
       (project-x-window-state-save))))
